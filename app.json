@@ -3,23 +3,83 @@
     "name": "gymbuddy",
     "slug": "gymbuddy",
     "version": "1.0.0",
+    "scheme": "gymbuddy",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "com.dominiceburuoh.gymbuddy",
+      "appleTeamId": "GA5P2J5N3R",
+      "supportsTablet": true,
+      "infoPlist": {
+        "CFBundleDisplayName": "GymBuddy",
+        "NSCameraUsageDescription": "GymBuddy uses your camera to verify you're at the gym before unlocking your apps.",
+        "NSLocationWhenInUseUsageDescription": "GymBuddy checks your location against your saved gym to verify you actually showed up."
+      },
+      "entitlements": {
+        "com.apple.developer.family-controls": true,
+        "com.apple.security.application-groups": [
+          "group.com.dominiceburuoh.gymbuddy"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#5B54F0",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "GymBuddy uses your camera to verify you're at the gym before unlocking your apps."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "GymBuddy checks your location against your saved gym to verify you actually showed up."
+        }
+      ],
+      [
+        "react-native-device-activity",
+        {
+          "appleTeamId": "GA5P2J5N3R",
+          "appGroup": "group.com.dominiceburuoh.gymbuddy",
+          "copyToTargetFolder": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.4"
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#121118",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#121118"
+          }
+        }
+      ]
+    ]
   }
 }
