@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gymbuddy-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/dominiceburuoh/Projects/gymbuddy-web", "run", "dev"],
+      "port": 3100,
+      "autoPort": true
+    }
+  ]
+}

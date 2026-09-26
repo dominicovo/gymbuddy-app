@@ -33,8 +33,17 @@ export function isScreenTimeAvailable(): boolean {
   return DeviceActivity.isAvailable();
 }
 
+/**
+ * Asks for Screen Time access. Resolves to whether it was granted — never
+ * rejects. iOS reports "Don't Allow" (and the simulator, which can't grant it)
+ * as an exception, but to every caller that just means "no".
+ */
 export async function requestScreenTimeAuthorization(): Promise<boolean> {
-  await DeviceActivity.requestAuthorization('individual');
+  try {
+    await DeviceActivity.requestAuthorization('individual');
+  } catch (error) {
+    console.info('Screen Time authorization not granted', error);
+  }
   return DeviceActivity.getAuthorizationStatus() === DeviceActivity.AuthorizationStatus.approved;
 }
 

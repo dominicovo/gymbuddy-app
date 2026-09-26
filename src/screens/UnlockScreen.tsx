@@ -3,25 +3,31 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { Button } from '../components/Button';
-import { LockStatusCard } from '../components/LockStatusCard';
+import { TodayHero } from '../components/TodayHero';
+import { WeekStrip } from '../components/WeekStrip';
+import { LargeHeader, ListGroup, ListRow, SectionHeader } from '../components/ListGroup';
 import { colors, radius, spacing, type } from '../theme/colors';
 import { useAppStore } from '../store/useAppStore';
 import { TabScreenProps } from '../navigation/types';
-import { formatHHMM } from '../lib/time';
-import { getThisWeek, weekSummary } from '../lib/weekTracker';
+import { getThisWeek } from '../lib/weekTracker';
 import { getCurrentLocation } from '../lib/location';
 import { distanceInMeters } from '../lib/geo';
+import { liveStreak } from '../lib/stats';
+import { LOCATION_CHECK_IN } from '../config/features';
 
 type Props = TabScreenProps<'Unlock'>;
 
 const METERS_PER_MILE = 1609.344;
 
-function formatDateHeader(date: Date): string {
+function formatDateEyebrow(date: Date): string {
   const weekday = date.toLocaleDateString('en-US', { weekday: 'long' });
-  const day = date.getDate();
   const month = date.toLocaleDateString('en-US', { month: 'short' });
-  return `${weekday.toUpperCase()} ${day} ${month.toUpperCase()}`;
+  return `${weekday} ${date.getDate()} ${month}`.toUpperCase();
+}
+
+function formatDistance(meters: number): string {
+  if (meters < 1000) return `${Math.round(meters)} m away`;
+  return `${(meters / METERS_PER_MILE).toFixed(1)} mi away`;
 }
 
 export function UnlockScreen({ navigation }: Props) {
@@ -29,22 +35,27 @@ export function UnlockScreen({ navigation }: Props) {
   const gymLocation = useAppStore((s) => s.gymLocation);
   const appSelection = useAppStore((s) => s.appSelection);
   const streak = useAppStore((s) => s.streak);
+  const lastProofDate = useAppStore((s) => s.lastProofDate);
   const checkIns = useAppStore((s) => s.checkIns);
-  const getLockState = useAppStore((s) => s.getLockState);
+  const startedAt = useAppStore((s) => s.startedAt);
+  const radiusMeters = useAppStore((s) => s.checkInRadiusMeters);
 
-  const [distanceMiles, setDistanceMiles] = useState<number | null>(null);
+  const [distance, setDistance] = useState<number | null>(null);
+  const [locationUnavailable, setLocationUnavailable] = useState(false);
 
   useFocusEffect(
     React.useCallback(() => {
       let cancelled = false;
-      if (gymLocation) {
+      if (LOCATION_CHECK_IN && gymLocation) {
         getCurrentLocation()
           .then((here) => {
-            if (!cancelled && here) {
-              setDistanceMiles(distanceInMeters(here, gymLocation) / METERS_PER_MILE);
-            }
+            if (cancelled) return;
+            setLocationUnavailable(!here);
+            if (here) setDistance(distanceInMeters(here, gymLocation));
           })
-          .catch(() => {});
+          .catch(() => {
+            if (!cancelled) setLocationUnavailable(true);
+          });
       }
       return () => {
         cancelled = true;
@@ -52,156 +63,91 @@ export function UnlockScreen({ navigation }: Props) {
     }, [gymLocation])
   );
 
-  const lockState = getLockState();
+  const now = new Date();
+  const currentStreak = liveStreak(schedule, streak, lastProofDate, now);
+  const week = getThisWeek(schedule, checkIns, now);
   const appCount = (appSelection?.applicationCount ?? 0) + (appSelection?.categoryCount ?? 0);
-  const week = getThisWeek(schedule, checkIns, new Date());
-  const summary = weekSummary(week);
+  const inRange = distance !== null && distance <= radiusMeters;
 
-  // No 'bottom' edge: the tab bar already sits in the bottom safe area, so
-  // insetting here as well leaves a dead band under the CTA.
+  const gymSubtitle = !gymLocation
+    ? 'Needed to check in'
+    : distance === null
+      ? locationUnavailable
+        ? 'Location off \u00b7 needed to check in'
+        : 'Locating you\u2026'
+      : inRange
+        ? `You’re here · ${Math.round(distance)} m`
+        : formatDistance(distance);
+
+  // No 'bottom' edge: the tab bar already sits in the bottom safe area.
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.headerRow}>
-          <Text style={styles.dateLabel}>{formatDateHeader(new Date())}</Text>
-          <View style={styles.streakPill}>
-            <Ionicons name="flame" size={14} color={colors.accent} />
-            <Text style={styles.streakPillText}>{streak} days</Text>
-          </View>
-        </View>
-        <Text style={styles.brand}>Unlock</Text>
-
-        <View style={styles.heroWrap}>
-          <LockStatusCard variant="full" />
-
-          <View style={styles.pillRow}>
-            <View style={styles.pill}>
-              <Ionicons name="apps-outline" size={13} color={colors.text} />
-              <Text style={styles.pillText}>{appCount > 0 ? `${appCount} selected` : 'No apps'}</Text>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <LargeHeader
+          eyebrow={formatDateEyebrow(now)}
+          title="Today"
+          right={
+            <View
+              style={[styles.streak, currentStreak > 0 && styles.streakActive]}
+              accessible
+              accessibilityLabel={`${currentStreak} day streak`}
+            >
+              <Ionicons name="flame" size={16} color={currentStreak > 0 ? colors.warning : colors.textFaint} />
+              <Text style={[styles.streakValue, currentStreak === 0 && { color: colors.textMuted }]}>{currentStreak}</Text>
             </View>
-            {distanceMiles !== null && (
-              <View style={styles.pill}>
-                <Ionicons name="location-outline" size={13} color={colors.text} />
-                <Text style={styles.pillText}>{distanceMiles.toFixed(1)} mi away</Text>
-              </View>
-            )}
-            {schedule && (
-              <View style={styles.pill}>
-                <Ionicons name="time-outline" size={13} color={colors.text} />
-                <Text style={styles.pillText}>
-                  {formatHHMM(schedule.windowStart)} – {formatHHMM(schedule.windowEnd)}
-                </Text>
-              </View>
-            )}
-          </View>
+          }
+        />
+
+        <View style={styles.hero}>
+          <TodayHero
+            onCheckIn={() => navigation.navigate('Proof')}
+            onSetup={() => navigation.navigate('Settings')}
+          />
         </View>
 
-        <View style={styles.weekCard}>
-          <View style={styles.weekHeader}>
-            <Text style={styles.weekTitle}>This week</Text>
-            <Text style={styles.weekSummary}>
-              {summary.done} of {summary.total} done
-            </Text>
-          </View>
-          <View style={styles.weekRow}>
-            {week.map((d) => (
-              <View key={d.date} style={styles.weekDayWrap}>
-                <Text style={[styles.weekDayLabel, d.isToday && styles.weekDayLabelToday]}>{d.day[0]}</Text>
-                <View
-                  style={[
-                    styles.weekDayCell,
-                    d.scheduled && styles.weekDayScheduled,
-                    d.done && styles.weekDayDone,
-                    d.isToday && !d.done && styles.weekDayToday,
-                  ]}
-                >
-                  {d.done ? (
-                    <Ionicons name="checkmark" size={14} color={colors.textOnAccent} />
-                  ) : d.isToday ? (
-                    <Ionicons name="ellipse-outline" size={12} color={colors.accent} />
-                  ) : null}
-                </View>
-              </View>
-            ))}
-          </View>
+        <SectionHeader title="Your setup" />
+        <ListGroup>
+          {LOCATION_CHECK_IN && (
+            <ListRow
+              icon={inRange ? 'location' : 'location-outline'}
+              tone={inRange ? 'success' : gymLocation ? 'accent' : 'warning'}
+              title={gymLocation?.label ?? 'No gym set'}
+              subtitle={gymSubtitle}
+              onPress={() => navigation.navigate('Settings')}
+            />
+          )}
+          <ListRow
+            icon="apps"
+            title={appCount > 0 ? `${appCount} app${appCount === 1 ? '' : 's'} & categories` : 'No apps picked'}
+            subtitle="Locked during your window"
+            tone={appCount > 0 ? 'accent' : 'warning'}
+            onPress={() => navigation.navigate('Settings')}
+          />
+        </ListGroup>
+
+        <View style={styles.week}>
+          <WeekStrip days={week} startedAt={startedAt} />
         </View>
       </ScrollView>
-
-      <View style={styles.footer}>
-        <Button
-          title="I'm at the Gym"
-          icon="camera"
-          disabled={lockState !== 'locked'}
-          onPress={() => navigation.navigate('Proof')}
-        />
-        <Text style={styles.footerCaption}>Photo plus location unlocks everything for today.</Text>
-      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.lg },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  dateLabel: { color: colors.textMuted, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
-  streakPill: {
+  scroll: { paddingHorizontal: spacing.md + 4, paddingTop: spacing.md, paddingBottom: spacing.xl },
+  streak: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  streakPillText: { color: colors.accent, fontSize: 15, fontWeight: '700' },
-  brand: { color: colors.text, ...type.display },
-  heroWrap: { marginTop: spacing.lg },
-  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'center', marginTop: spacing.md },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
     backgroundColor: colors.surface,
     borderRadius: radius.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
+    paddingLeft: 10,
+    paddingRight: 12,
+    paddingVertical: 4,
   },
-  pillText: { color: colors.text, fontSize: 15, fontWeight: '700' },
-  weekCard: {
-    marginTop: spacing.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-  },
-  weekHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
-  weekTitle: { color: colors.text, ...type.subtitle },
-  weekSummary: { color: colors.textMuted, fontSize: 15, fontWeight: '600' },
-  weekRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  weekDayWrap: { alignItems: 'center', gap: spacing.xs },
-  weekDayLabel: { color: colors.textMuted, fontSize: 14, fontWeight: '600' },
-  weekDayLabelToday: { color: colors.accent },
-  weekDayCell: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surfaceAlt,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  weekDayScheduled: { backgroundColor: colors.accentMuted },
-  weekDayDone: { backgroundColor: colors.accent },
-  weekDayToday: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.accent },
-  footer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  footerCaption: { color: colors.textMuted, fontSize: 14, textAlign: 'center', marginTop: spacing.sm },
+  streakActive: { backgroundColor: colors.warningMuted },
+  streakValue: { color: colors.text, ...type.numeralS, fontSize: 22, lineHeight: 26 },
+  hero: { marginTop: spacing.md },
+  week: { marginTop: spacing.lg },
 });

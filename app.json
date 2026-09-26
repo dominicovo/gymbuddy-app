@@ -9,23 +9,30 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "bundleIdentifier": "com.dominiceburuoh.gymbuddy",
+      "buildNumber": "2",
       "appleTeamId": "GA5P2J5N3R",
-      "supportsTablet": true,
+      "supportsTablet": false,
+      "usesAppleSignIn": true,
       "infoPlist": {
         "CFBundleDisplayName": "GymBuddy",
-        "NSCameraUsageDescription": "GymBuddy uses your camera to verify you're at the gym before unlocking your apps.",
-        "NSLocationWhenInUseUsageDescription": "GymBuddy checks your location against your saved gym to verify you actually showed up."
+        "NSCameraUsageDescription": "GymBuddy uses your camera to take a check-in photo at the gym before unlocking your apps.",
+        "NSLocationWhenInUseUsageDescription": "GymBuddy uses your location to find gyms near you.",
+        "CFBundleName": "GymBuddy",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
         "com.apple.developer.family-controls": true,
         "com.apple.security.application-groups": [
           "group.com.dominiceburuoh.gymbuddy"
         ]
-      }
+      },
+      "associatedDomains": [
+        "applinks:www.gymbuddy.live"
+      ]
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#5B54F0",
+        "backgroundColor": "#000000",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -42,13 +49,14 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "GymBuddy uses your camera to verify you're at the gym before unlocking your apps."
+          "cameraPermission": "GymBuddy uses your camera to take a check-in photo at the gym before unlocking your apps.",
+          "photosPermission": "GymBuddy uses your photos so you can pick a profile picture your buddies will see."
         }
       ],
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "GymBuddy checks your location against your saved gym to verify you actually showed up."
+          "locationWhenInUsePermission": "GymBuddy uses your location to find gyms near you."
         }
       ],
       [
@@ -67,19 +75,28 @@
           }
         }
       ],
+      "expo-apple-authentication",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.1080082594649-thmnuttdo8cjq8igp331vbmio7l534il"
+        }
+      ],
       [
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
-          "imageWidth": 220,
+          "imageWidth": 280,
           "resizeMode": "contain",
-          "backgroundColor": "#121118",
+          "backgroundColor": "#08070C",
           "dark": {
             "image": "./assets/splash-icon.png",
-            "backgroundColor": "#121118"
+            "backgroundColor": "#08070C"
           }
         }
-      ]
+      ],
+      "./plugins/withUISceneLifecycle.js",
+      "expo-font"
     ]
   }
 }

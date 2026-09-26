@@ -10,6 +10,7 @@ import { RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../store/useAuthStore';
 import { requestScreenTimeAuthorization } from '../../lib/screenTime';
 import { requestLocationPermission } from '../../lib/location';
+import { LOCATION_CHECK_IN } from '../../config/features';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AuthPermissions'>;
 
@@ -20,7 +21,7 @@ interface PermissionRow {
   hint: string;
 }
 
-const ROWS: PermissionRow[] = [
+const ALL_ROWS: PermissionRow[] = [
   {
     key: 'screenTime',
     icon: 'phone-portrait-outline',
@@ -41,10 +42,12 @@ const ROWS: PermissionRow[] = [
   },
 ];
 
+// Location is only asked for when check-ins verify it.
+const ROWS = ALL_ROWS.filter((row) => LOCATION_CHECK_IN || row.key !== 'location');
+
 export function AuthPermissionsScreen({ navigation }: Props) {
   const permissions = useAuthStore((s) => s.permissions);
   const setPermission = useAuthStore((s) => s.setPermission);
-  const completeSignUp = useAuthStore((s) => s.completeSignUp);
   const [requesting, setRequesting] = useState<PermissionRow['key'] | null>(null);
 
   async function allow(key: PermissionRow['key']) {
@@ -66,11 +69,10 @@ export function AuthPermissionsScreen({ navigation }: Props) {
     setRequesting(null);
   }
 
-  const allGranted = permissions.screenTime && permissions.notifications && permissions.location;
+  const allGranted = ROWS.every((row) => permissions[row.key]);
 
   function next() {
     if (!permissions.screenTime) return;
-    completeSignUp();
     navigation.reset({ index: 0, routes: [{ name: 'OnboardingApps' }] });
   }
 
@@ -78,7 +80,7 @@ export function AuthPermissionsScreen({ navigation }: Props) {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.eyebrow}>ACCESS</Text>
-        <Text style={styles.title}>Three permissions</Text>
+        <Text style={styles.title}>{ROWS.length === 3 ? 'Three permissions' : 'Two permissions'}</Text>
         <Text style={styles.subtitle}>
           GymBuddy can't lock anything without them. Screen Time is the one that does the work.
         </Text>
@@ -112,10 +114,18 @@ export function AuthPermissionsScreen({ navigation }: Props) {
 
       <View style={styles.footer}>
         <Button title={allGranted ? 'Start setup' : 'Continue'} disabled={!permissions.screenTime} onPress={next} />
+        {/* Screen Time can't be granted on the simulator. Stripped from release builds by __DEV__. */}
+        {__DEV__ && !permissions.screenTime && (
+          <Button
+            title="Skip permissions (dev only)"
+            variant="secondary"
+            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'OnboardingApps' }] })}
+          />
+        )}
         <Text style={styles.footerNote}>
           {permissions.screenTime
             ? 'Apple keeps your locked-app list private. We only ever see that a lock is on.'
-            : 'Screen Time is the one GymBuddy genuinely cannot work without — it is what locks the apps. Notifications and location are optional.'}
+            : 'Screen Time is the one GymBuddy genuinely cannot work without — it is what locks the apps. Notifications are optional.'}
         </Text>
       </View>
     </SafeAreaView>
@@ -133,8 +143,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: radius.lg,
     padding: spacing.md,
   },
@@ -156,9 +164,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs + 2,
   },
-  allowedButton: { backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border },
+  allowedButton: { backgroundColor: colors.successMuted },
   allowButtonText: { color: colors.textOnAccent, fontSize: 15, fontWeight: '700' },
-  allowedButtonText: { color: colors.textMuted },
+  allowedButtonText: { color: colors.success },
   footer: { marginTop: 'auto', paddingTop: spacing.lg, gap: spacing.md },
   footerNote: { color: colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 17 },
 });

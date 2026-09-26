@@ -1,16 +1,19 @@
-import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { DeviceActivitySelectionSheetView } from 'react-native-device-activity';
 import { Button } from '../components/Button';
-import { Chip } from '../components/Chip';
-import { LockStatusCard } from '../components/LockStatusCard';
+import { DayPicker } from '../components/DayPicker';
+import { IconButton } from '../components/IconButton';
+import { ListGroup, ListRow, SectionHeader } from '../components/ListGroup';
 import { TimeStepper } from '../components/TimeStepper';
 import { colors, radius, spacing, type } from '../theme/colors';
-import { ALL_DAYS, DayOfWeek, IoniconName } from '../types';
+import { DayOfWeek } from '../types';
 import { useAppStore } from '../store/useAppStore';
 import { useAuthStore } from '../store/useAuthStore';
-import { stepHHMM } from '../lib/time';
+import { formatHHMM, stepHHMM } from '../lib/time';
+import { formatDays } from '../lib/schedule';
 import { RootStackScreenProps } from '../navigation/types';
 import {
   hasScreenTimeAuthorization,
@@ -20,8 +23,9 @@ import {
   startScreenTimeMonitoring,
   updateShieldCopy,
 } from '../lib/screenTime';
-import { getCurrentLocation, searchLocation } from '../lib/location';
-import { DeviceActivitySelectionSheetView } from 'react-native-device-activity';
+import { ResolvedLocation } from '../lib/location';
+import { GymPicker } from '../components/GymPicker';
+import { LOCATION_CHECK_IN } from '../config/features';
 
 type Props = RootStackScreenProps<'Settings'>;
 
@@ -31,7 +35,7 @@ const RADIUS_STEP = 25;
 const RADIUS_MIN = 50;
 const RADIUS_MAX = 500;
 
-type ExpandedSection = 'days' | 'window' | 'gym' | 'grace' | 'radius' | null;
+type ExpandedSection = 'schedule' | 'gym' | 'grace' | 'radius' | null;
 
 export function SettingsScreen({ navigation }: Props) {
   const schedule = useAppStore((s) => s.schedule);
@@ -47,8 +51,13 @@ export function SettingsScreen({ navigation }: Props) {
   const strictMode = useAppStore((s) => s.strictMode);
   const setStrictMode = useAppStore((s) => s.setStrictMode);
   const streak = useAppStore((s) => s.streak);
-  const pairCode = useAuthStore((s) => s.pairCode);
+  const email = useAuthStore((s) => s.email);
+  const provider = useAuthStore((s) => s.provider);
   const signOut = useAuthStore((s) => s.signOut);
+  const deleteAccount = useAuthStore((s) => s.deleteAccount);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const bypassed = useAuthStore((s) => s.bypassed);
+  const [deleting, setDeleting] = useState(false);
 
   const [days, setDays] = useState<DayOfWeek[]>(schedule?.days ?? []);
   const [windowStart, setWindowStart] = useState(schedule?.windowStart ?? '06:00');
@@ -56,10 +65,11 @@ export function SettingsScreen({ navigation }: Props) {
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [requesting, setRequesting] = useState(false);
-  const [locating, setLocating] = useState(false);
-  const [gymQuery, setGymQuery] = useState('');
-  const [searchingGym, setSearchingGym] = useState(false);
   const [expanded, setExpanded] = useState<ExpandedSection>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  // Offsets used to lift the gym search above the keyboard.
+  const checkInY = useRef(0);
+  const gymPanelY = useRef(0);
 
   const isDirty =
     JSON.stringify([...days].sort()) !== JSON.stringify([...(schedule?.days ?? [])].sort()) ||
@@ -69,28 +79,27 @@ export function SettingsScreen({ navigation }: Props) {
   const appCount = (appSelection?.applicationCount ?? 0) + (appSelection?.categoryCount ?? 0);
 
   function toggleExpanded(section: ExpandedSection) {
-    if (strictMode && (section === 'days' || section === 'window') && schedule) {
-      const lockState = useAppStore.getState().getLockState();
-      if (lockState === 'locked') {
-        Alert.alert('Strict mode is on', 'No schedule edits while the window is open. Turn off Strict mode to change this now.');
+    if (strictMode && section === 'schedule' && schedule) {
+      if (useAppStore.getState().getLockState() === 'locked') {
+        Alert.alert('Strict mode is on', 'No schedule edits while the window is open. Check in first, or turn off Strict mode.');
         return;
       }
     }
     setExpanded((cur) => (cur === section ? null : section));
   }
 
-  function toggleDay(day: DayOfWeek) {
-    setDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
-  }
-
   async function saveSchedule() {
+    if (days.length === 0) {
+      Alert.alert('Pick at least one day', 'GymBuddy needs at least one gym day to lock on.');
+      return;
+    }
     const next = { days, windowStart, windowEnd };
     setSavingSchedule(true);
     try {
       await startScreenTimeMonitoring(next, graceMinutes);
       updateShieldCopy({ schedule: next, gymName: gymLocation?.label ?? null, streak });
     } catch (error) {
-      Alert.alert('Could not update schedule', 'The schedule was saved, but re-registering it with Screen Time failed. Try again.');
+      Alert.alert('Could not update Screen Time', 'The schedule was saved, but re-registering it with Screen Time failed. Try again.');
       console.warn('startScreenTimeMonitoring failed', error);
     }
     setSavingSchedule(false);
@@ -99,115 +108,100 @@ export function SettingsScreen({ navigation }: Props) {
   }
 
   async function openPicker() {
+    if (strictMode && useAppStore.getState().getLockState() === 'locked') {
+      Alert.alert('Strict mode is on', 'No app changes while the window is open. Check in first, or turn off Strict mode.');
+      return;
+    }
     if (!hasScreenTimeAuthorization()) {
       setRequesting(true);
       const granted = await requestScreenTimeAuthorization().finally(() => setRequesting(false));
       if (!granted) {
-        Alert.alert(
-          'Screen Time access needed',
-          'GymBuddy needs Screen Time permission to lock apps. You can allow this under Settings › Screen Time › GymBuddy.'
-        );
+        Alert.alert('Screen Time access needed', 'GymBuddy needs Screen Time permission to lock apps.', [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ]);
         return;
       }
     }
     setPickerVisible(true);
   }
 
-  async function useCurrentLocationForGym() {
-    setLocating(true);
-    const result = await getCurrentLocation();
-    setLocating(false);
-
-    if (!result) {
-      Alert.alert(
-        'Location access needed',
-        'GymBuddy needs your location to confirm you actually showed up. You can allow this under Settings › Privacy › Location Services.'
-      );
-      return;
-    }
-    setGymLocation(result);
-    if (schedule) updateShieldCopy({ schedule, gymName: result.label, streak });
+  function changeGym(gym: ResolvedLocation) {
+    setGymLocation(gym);
+    if (schedule) updateShieldCopy({ schedule, gymName: gym.label, streak });
     setExpanded(null);
-  }
-
-  async function searchForGym() {
-    if (!gymQuery.trim()) return;
-    setSearchingGym(true);
-    const result = await searchLocation(gymQuery);
-    setSearchingGym(false);
-
-    if (!result) {
-      Alert.alert('No match found', "Couldn't find that place. Try a fuller address.");
-      return;
-    }
-    setGymLocation(result);
-    if (schedule) updateShieldCopy({ schedule, gymName: result.label, streak });
-    setExpanded(null);
-    setGymQuery('');
-  }
-
-  function adjustGrace(delta: number) {
-    setGraceMinutes(Math.max(0, Math.min(GRACE_MAX, graceMinutes + delta)));
-  }
-
-  function adjustRadius(delta: number) {
-    setCheckInRadiusMeters(Math.max(RADIUS_MIN, Math.min(RADIUS_MAX, checkInRadiusMeters + delta)));
   }
 
   function confirmSignOut() {
-    Alert.alert('Sign out?', "You'll need to sign back in to unlock apps.", [
+    Alert.alert('Sign out?', 'Your locks keep running on this phone. Sign back in to see buddies again.', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign Out',
         style: 'destructive',
         onPress: () => {
-          signOut();
+          void signOut();
           navigation.reset({ index: 0, routes: [{ name: 'AuthEntry' }] });
         },
       },
     ]);
   }
 
+  function confirmDelete() {
+    Alert.alert(
+      'Delete your account?',
+      'This permanently deletes your profile, photo, buddies and check-in history. Your locks on this phone keep running. This can\u2019t be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete account',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(true);
+            const { error } = await deleteAccount();
+            setDeleting(false);
+            if (error) {
+              Alert.alert('Account not deleted', error);
+              return;
+            }
+            navigation.reset({ index: 0, routes: [{ name: 'AuthEntry' }] });
+          },
+        },
+      ],
+    );
+  }
+
+  const signedInAs = email ?? (provider ? `Signed in with ${provider === 'apple' ? 'Apple' : 'Google'}` : 'Not signed in');
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={styles.headerRow}>
-          <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
-            <Ionicons name="chevron-back" size={20} color={colors.text} />
-          </Pressable>
-          <Text style={styles.title}>Settings</Text>
+      <ScrollView
+        ref={scrollRef}
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.topBar}>
+          <IconButton icon="chevron-back" onPress={() => navigation.goBack()} accessibilityLabel="Back" size={36} />
         </View>
+        <Text style={styles.title}>Settings</Text>
 
-        <LockStatusCard variant="compact" showStreak />
-
-        <Text style={styles.sectionLabel}>LOCK</Text>
-        <View style={styles.groupCard}>
-          <SettingsRow
-            icon="calendar-outline"
-            title="Gym days"
-            value={days.length ? days.join(' · ') : 'Not set'}
-            onPress={() => toggleExpanded('days')}
+        <SectionHeader title="Lock" />
+        <ListGroup>
+          <ListRow
+            icon="calendar"
+            title="Schedule"
+            subtitle={
+              schedule
+                ? `${formatDays(schedule.days)} · ${formatHHMM(schedule.windowStart)} – ${formatHHMM(schedule.windowEnd)}`
+                : 'Not set'
+            }
+            onPress={() => toggleExpanded('schedule')}
           />
-          {expanded === 'days' && (
-            <View style={styles.expandedWrap}>
-              <View style={styles.dayRow}>
-                {ALL_DAYS.map((day) => (
-                  <Chip key={day} label={day} selected={days.includes(day)} onPress={() => toggleDay(day)} />
-                ))}
-              </View>
-              {isDirty && <Button title="Save schedule" loading={savingSchedule} onPress={saveSchedule} />}
-            </View>
-          )}
-
-          <View style={styles.rowDivider} />
-          <SettingsRow
-            icon="time-outline"
-            title="Lock window"
-            value={`${formatDisplay(windowStart)} – ${formatDisplay(windowEnd)}`}
-            onPress={() => toggleExpanded('window')}
-          />
-          {expanded === 'window' && (
-            <View style={styles.expandedWrap}>
+          {expanded === 'schedule' && (
+            <View style={styles.panel}>
+              <DayPicker value={days} onChange={setDays} />
               <View style={styles.timeRow}>
                 <TimeStepper
                   label="From"
@@ -225,50 +219,43 @@ export function SettingsScreen({ navigation }: Props) {
               {isDirty && <Button title="Save schedule" loading={savingSchedule} onPress={saveSchedule} />}
             </View>
           )}
-
-          <View style={styles.rowDivider} />
-          <SettingsRow
-            icon="lock-closed-outline"
+          <ListRow
+            icon="apps"
             title="Locked apps"
-            value={appCount > 0 ? `${appCount} selected` : requesting ? 'Requesting…' : 'No apps selected'}
+            value={requesting ? 'Requesting…' : appCount > 0 ? `${appCount} selected` : 'None'}
             onPress={openPicker}
           />
-
-          <View style={styles.rowDivider} />
-          <SettingsRow
-            icon="shield-checkmark-outline"
-            title="Strict mode"
-            subtitle="No schedule or app edits while the window is open"
-            showChevron={false}
-            right={
-              <Switch
-                value={strictMode}
-                onValueChange={setStrictMode}
-                trackColor={{ false: colors.border, true: colors.accent }}
-                thumbColor={colors.surface}
-                ios_backgroundColor={colors.border}
-              />
-            }
-          />
-
-          <View style={styles.rowDivider} />
-          <SettingsRow
-            icon="hourglass-outline"
+          <ListRow
+            icon="hourglass"
             title="Grace period"
             subtitle="Free minutes after the window opens"
             value={`${graceMinutes} min`}
             onPress={() => toggleExpanded('grace')}
           />
           {expanded === 'grace' && (
-            <View style={styles.expandedWrap}>
+            <View style={styles.panel}>
               <Stepper
                 value={`${graceMinutes} min`}
-                onDecrement={() => adjustGrace(-GRACE_STEP)}
-                onIncrement={() => adjustGrace(GRACE_STEP)}
+                onDecrement={() => setGraceMinutes(Math.max(0, graceMinutes - GRACE_STEP))}
+                onIncrement={() => setGraceMinutes(Math.min(GRACE_MAX, graceMinutes + GRACE_STEP))}
               />
             </View>
           )}
-        </View>
+          <ListRow
+            icon="shield-checkmark"
+            title="Strict mode"
+            subtitle="No schedule or app changes while locked"
+            trailing={
+              <Switch
+                value={strictMode}
+                onValueChange={setStrictMode}
+                trackColor={{ false: colors.surfaceRaised, true: colors.accent }}
+                ios_backgroundColor={colors.surfaceRaised}
+                accessibilityLabel="Strict mode"
+              />
+            }
+          />
+        </ListGroup>
 
         {pickerVisible && (
           <DeviceActivitySelectionSheetView
@@ -276,168 +263,97 @@ export function SettingsScreen({ navigation }: Props) {
             headerText="Apps to lock on gym days"
             onDismissRequest={() => setPickerVisible(false)}
             onSelectionChange={(event) => {
-              const { familyActivitySelection, applicationCount, categoryCount, webDomainCount } =
-                event.nativeEvent;
-              if (familyActivitySelection) {
-                saveAppSelection(familyActivitySelection);
-              }
+              const { familyActivitySelection, applicationCount, categoryCount, webDomainCount } = event.nativeEvent;
+              if (familyActivitySelection) saveAppSelection(familyActivitySelection);
               setAppSelection({ applicationCount, categoryCount, webDomainCount });
             }}
           />
         )}
 
-        <Text style={styles.sectionLabel}>CHECK-IN</Text>
-        <View style={styles.groupCard}>
-          <SettingsRow
-            icon="location-outline"
-            title="Gym location"
-            value={gymLocation ? gymLocation.label : 'Not set'}
-            onPress={() => toggleExpanded('gym')}
-          />
-          {expanded === 'gym' && (
-            <View style={styles.expandedWrap}>
-              <View style={styles.searchRow}>
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search gym name or address"
-                  placeholderTextColor={colors.textMuted}
-                  value={gymQuery}
-                  onChangeText={setGymQuery}
-                  onSubmitEditing={searchForGym}
-                  returnKeyType="search"
+        {LOCATION_CHECK_IN && (
+          <>
+            <SectionHeader title="Check-in" />
+            <View onLayout={(e) => (checkInY.current = e.nativeEvent.layout.y)}>
+              <ListGroup>
+                <ListRow icon="location" title="Gym" value={gymLocation?.label ?? 'Not set'} onPress={() => toggleExpanded('gym')} />
+                {expanded === 'gym' && (
+                  <View style={styles.panel} onLayout={(e) => (gymPanelY.current = e.nativeEvent.layout.y)}>
+                    <GymPicker
+                      value={gymLocation}
+                      onChange={changeGym}
+                      onSearchFocus={(y) => scrollRef.current?.scrollTo({ y: checkInY.current + gymPanelY.current + y, animated: true })}
+                    />
+                  </View>
+                )}
+                <ListRow
+                  icon="radio"
+                  title="Check-in radius"
+                  subtitle="How close counts as there"
+                  value={`${checkInRadiusMeters} m`}
+                  onPress={() => toggleExpanded('radius')}
                 />
-                <Button title="Search" variant="secondary" loading={searchingGym} onPress={searchForGym} style={styles.searchButton} />
-              </View>
-              <Button
-                title="Use My Current Location"
-                variant="secondary"
-                loading={locating}
-                onPress={useCurrentLocationForGym}
-              />
+                {expanded === 'radius' && (
+                  <View style={styles.panel}>
+                    <Stepper
+                      value={`${checkInRadiusMeters} m`}
+                      onDecrement={() => setCheckInRadiusMeters(Math.max(RADIUS_MIN, checkInRadiusMeters - RADIUS_STEP))}
+                      onIncrement={() => setCheckInRadiusMeters(Math.min(RADIUS_MAX, checkInRadiusMeters + RADIUS_STEP))}
+                    />
+                  </View>
+                )}
+              </ListGroup>
             </View>
-          )}
+          </>
+        )}
 
-          <View style={styles.rowDivider} />
-          <SettingsRow
-            icon="radio-outline"
-            title="Check-in radius"
-            subtitle="How close counts as there"
-            value={`${checkInRadiusMeters} m`}
-            onPress={() => toggleExpanded('radius')}
-          />
-          {expanded === 'radius' && (
-            <View style={styles.expandedWrap}>
-              <Stepper
-                value={`${checkInRadiusMeters} m`}
-                onDecrement={() => adjustRadius(-RADIUS_STEP)}
-                onIncrement={() => adjustRadius(RADIUS_STEP)}
+        <SectionHeader title="Account" />
+        <ListGroup>
+          <ListRow icon="log-out-outline" title="Sign out" subtitle={signedInAs} destructive showChevron={false} onPress={confirmSignOut} />
+          {isAuthenticated && !bypassed && (
+            <ListRow
+              icon="trash-outline"
+              title={deleting ? 'Deleting\u2026' : 'Delete account'}
+              subtitle="Removes your profile, buddies and history"
+              destructive
+              showChevron={false}
+              onPress={deleting ? undefined : confirmDelete}
+            />
+          )}
+        </ListGroup>
+
+        {__DEV__ && (
+          <>
+            <SectionHeader title="Developer" />
+            <ListGroup>
+              <ListRow
+                icon="flask"
+                tone="neutral"
+                title="Lock now (test)"
+                subtitle="Shields your picked apps immediately"
+                onPress={() => {
+                  lockNowForTesting();
+                  Alert.alert('Sent', 'Tried locking your selected apps now, bypassing the schedule.');
+                }}
               />
-            </View>
-          )}
+            </ListGroup>
+          </>
+        )}
 
-          <View style={styles.rowDivider} />
-          <SettingsRow
-            icon="camera-outline"
-            title="Proof required"
-            value="Photo + location"
-            onPress={() => Alert.alert('Coming soon', 'Other proof types are on the way. For now, GymBuddy checks a photo plus your location.')}
-          />
-        </View>
-
-        <Text style={styles.sectionLabel}>BUDDIES</Text>
-        <View style={styles.groupCard}>
-          <SettingsRow
-            icon="qr-code-outline"
-            title="Pair code"
-            value={pairCode}
-            onPress={() => navigation.navigate('SharePairCard')}
-          />
-        </View>
-
-        <Text style={styles.sectionLabel}>NOTIFICATIONS</Text>
-        <View style={styles.groupCard}>
-          <SettingsRow icon="notifications-outline" title="Reminders" value="Coming soon" showChevron={false} />
-        </View>
-
-        <Text style={styles.sectionLabel}>DEBUG</Text>
-        <Button
-          title="Lock Now (test)"
-          variant="secondary"
-          onPress={() => {
-            lockNowForTesting();
-            Alert.alert('Sent', 'Tried locking your selected apps immediately, bypassing the schedule. Try opening one now.');
-          }}
-        />
-
-        <Text style={styles.accountLabel}>ACCOUNT</Text>
-        <Button title="Sign out" variant="danger" icon="log-out-outline" onPress={confirmSignOut} />
-        <Text style={styles.signOutCaption}>
-          Your schedule, streak and buddies stay on your account. Signing back in restores them.
-        </Text>
-
-        <View style={styles.about}>
-          <Text style={styles.aboutText}>GymBuddy · v1.0.0</Text>
-          <Text style={styles.aboutText}>gymbuddy.live</Text>
-        </View>
+        <Text style={styles.about}>GymBuddy 1.0.0 · gymbuddy.live</Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function formatDisplay(hhmm: string): string {
-  const [h, m] = hhmm.split(':').map(Number);
-  const period = h >= 12 ? 'PM' : 'AM';
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
-}
-
-interface SettingsRowProps {
-  icon: IoniconName;
-  title: string;
-  subtitle?: string;
-  value?: string;
-  showChevron?: boolean;
-  right?: React.ReactNode;
-  onPress?: () => void;
-  danger?: boolean;
-}
-
-function SettingsRow({ icon, title, subtitle, value, showChevron = true, right, onPress, danger }: SettingsRowProps) {
-  const content = (
-    <View style={styles.row}>
-      <View style={styles.rowIconWrap}>
-        <Ionicons name={icon} size={18} color={danger ? colors.danger : colors.accent} />
-      </View>
-      <View style={styles.rowTextWrap}>
-        <Text style={danger ? styles.rowLabelDanger : styles.rowLabel}>{title}</Text>
-        {subtitle ? <Text style={styles.rowSubtitle}>{subtitle}</Text> : null}
-      </View>
-      {right ?? (
-        <View style={styles.rowRight}>
-          {value ? (
-            <Text style={styles.rowValue} numberOfLines={1}>
-              {value}
-            </Text>
-          ) : null}
-          {showChevron && <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />}
-        </View>
-      )}
-    </View>
-  );
-
-  if (!onPress) return content;
-  return <Pressable onPress={onPress}>{content}</Pressable>;
-}
-
 function Stepper({ value, onDecrement, onIncrement }: { value: string; onDecrement: () => void; onIncrement: () => void }) {
   return (
-    <View style={styles.stepperRow}>
-      <Pressable style={styles.stepperButton} onPress={onDecrement}>
-        <Ionicons name="remove" size={18} color={colors.text} />
+    <View style={styles.stepper}>
+      <Pressable style={styles.stepperButton} onPress={onDecrement} accessibilityRole="button" accessibilityLabel="Decrease">
+        <Ionicons name="remove" size={20} color={colors.text} />
       </Pressable>
       <Text style={styles.stepperValue}>{value}</Text>
-      <Pressable style={styles.stepperButton} onPress={onIncrement}>
-        <Ionicons name="add" size={18} color={colors.text} />
+      <Pressable style={styles.stepperButton} onPress={onIncrement} accessibilityRole="button" accessibilityLabel="Increase">
+        <Ionicons name="add" size={20} color={colors.text} />
       </Pressable>
     </View>
   );
@@ -445,110 +361,28 @@ function Stepper({ value, onDecrement, onIncrement }: { value: string; onDecreme
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  scroll: { padding: spacing.lg, paddingBottom: spacing.xxl },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.lg },
-  backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceAlt,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: { color: colors.text, ...type.display },
-  sectionLabel: {
-    color: colors.textMuted,
-    ...type.label,
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  groupCard: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  rowDivider: { height: 1, backgroundColor: colors.border },
-  rowIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.sm,
-    backgroundColor: colors.accentMuted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: spacing.md,
-  },
-  rowTextWrap: { flex: 1, marginRight: spacing.sm },
-  rowLabel: { color: colors.text, fontSize: 17, fontWeight: '700' },
-  rowLabelDanger: { color: colors.danger, fontSize: 17, fontWeight: '700' },
-  rowSubtitle: { color: colors.textMuted, fontSize: 14, marginTop: 2, lineHeight: 16 },
-  // Capped so a long value (a full gym address, say) can't crowd out the label.
-  rowRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexShrink: 1, maxWidth: '55%' },
-  rowValue: { color: colors.textMuted, fontSize: 17, fontWeight: '500', flexShrink: 1 },
-  expandedWrap: {
-    padding: spacing.md,
-    paddingTop: 0,
-    gap: spacing.sm,
-  },
-  dayRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  timeRow: { flexDirection: 'row', gap: spacing.md },
+  scroll: { paddingHorizontal: spacing.md + 4, paddingBottom: spacing.xxl },
+  topBar: { paddingVertical: spacing.sm },
+  title: { color: colors.text, ...type.display, marginTop: spacing.xs },
+  panel: { padding: spacing.md, gap: spacing.md, backgroundColor: colors.background },
+  timeRow: { flexDirection: 'row', gap: spacing.sm },
   hiddenAnchor: { width: 1, height: 1, position: 'absolute' },
-  stepperRow: {
+  stepper: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.lg,
-    backgroundColor: colors.surfaceAlt,
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
     borderRadius: radius.md,
-    paddingVertical: spacing.sm + 2,
+    padding: spacing.sm,
   },
   stepperButton: {
-    width: 32,
-    height: 32,
+    width: 48,
+    height: 40,
     borderRadius: radius.sm,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stepperValue: { color: colors.text, fontSize: 17, fontWeight: '700', minWidth: 60, textAlign: 'center' },
-  searchRow: { flexDirection: 'row', gap: spacing.sm },
-  searchInput: {
-    flex: 1,
-    backgroundColor: colors.surfaceAlt,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 4,
-    color: colors.text,
-    fontSize: 17,
-  },
-  searchButton: { paddingHorizontal: spacing.lg },
-  accountLabel: {
-    color: colors.danger,
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  signOutCaption: {
-    color: colors.textMuted,
-    ...type.caption,
-    marginTop: spacing.sm,
-    textAlign: 'center',
-  },
-  about: { marginTop: spacing.xl, alignItems: 'center', gap: spacing.xs },
-  aboutText: { color: colors.textMuted, ...type.caption },
+  stepperValue: { color: colors.text, ...type.numeralM },
+  about: { color: colors.textFaint, ...type.caption, textAlign: 'center', marginTop: spacing.xl },
 });

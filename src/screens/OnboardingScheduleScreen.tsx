@@ -1,55 +1,72 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Button } from '../components/Button';
-import { Chip } from '../components/Chip';
+import { DayPicker } from '../components/DayPicker';
+import { OnboardingHeader } from '../components/OnboardingHeader';
+import { SectionHeader } from '../components/ListGroup';
 import { TimeStepper } from '../components/TimeStepper';
 import { colors, spacing, type } from '../theme/colors';
-import { ALL_DAYS, DayOfWeek } from '../types';
+import { DayOfWeek } from '../types';
 import { useAppStore } from '../store/useAppStore';
 import { RootStackParamList } from '../navigation/types';
-import { stepHHMM } from '../lib/time';
+import { stepHHMM, windowHours } from '../lib/time';
+import { startScreenTimeMonitoring, updateShieldCopy } from '../lib/screenTime';
+import { LOCATION_CHECK_IN, SETUP_STEPS } from '../config/features';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'OnboardingSchedule'>;
 
 export function OnboardingScheduleScreen({ navigation }: Props) {
+  const existing = useAppStore((s) => s.schedule);
   const setSchedule = useAppStore((s) => s.setSchedule);
+  const graceMinutes = useAppStore((s) => s.graceMinutes);
+  const completeOnboarding = useAppStore((s) => s.completeOnboarding);
+  const [finishing, setFinishing] = useState(false);
 
-  const [days, setDays] = useState<DayOfWeek[]>(['Mon', 'Wed', 'Fri']);
-  const [windowStart, setWindowStart] = useState('06:00');
-  const [windowEnd, setWindowEnd] = useState('20:00');
+  const [days, setDays] = useState<DayOfWeek[]>(existing?.days ?? ['Mon', 'Wed', 'Fri']);
+  const [windowStart, setWindowStart] = useState(existing?.windowStart ?? '06:00');
+  const [windowEnd, setWindowEnd] = useState(existing?.windowEnd ?? '20:00');
 
-  function toggleDay(day: DayOfWeek) {
-    setDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
-  }
+  const hours = windowHours(windowStart, windowEnd);
+  const valid = days.length > 0 && windowStart !== windowEnd;
 
-  function next() {
-    setSchedule({ days, windowStart, windowEnd });
-    navigation.navigate('OnboardingGym');
+  async function next() {
+    const schedule = { days, windowStart, windowEnd };
+    setSchedule(schedule);
+    if (LOCATION_CHECK_IN) {
+      navigation.navigate('OnboardingGym');
+      return;
+    }
+    // Last step while check-ins are photo-only: start the locks and go.
+    setFinishing(true);
+    try {
+      await startScreenTimeMonitoring(schedule, graceMinutes);
+      updateShieldCopy({ schedule, gymName: null, streak: 0 });
+    } catch (error) {
+      Alert.alert('Could not start locking', 'Your setup was saved, but Screen Time didn’t accept the schedule. Try again from Settings.');
+      console.warn('startScreenTimeMonitoring failed', error);
+    }
+    setFinishing(false);
+    completeOnboarding();
+    navigation.reset({ index: 0, routes: [{ name: 'Main' }] });
   }
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.eyebrow}>STEP 2 OF 3</Text>
-        <Text style={styles.title}>Set your schedule</Text>
-        <Text style={styles.subtitle}>
-          Pick your gym days and lock window. Apps lock the moment that window opens.
-        </Text>
-      </View>
+      <OnboardingHeader
+        step={2}
+        total={SETUP_STEPS}
+        onBack={() => navigation.goBack()}
+        title="When do you train?"
+        subtitle="On these days, your apps lock when the window opens and stay locked until you check in."
+      />
 
-      <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Gym days</Text>
-        <View style={styles.dayRow}>
-          {ALL_DAYS.map((day) => (
-            <Chip key={day} label={day} selected={days.includes(day)} onPress={() => toggleDay(day)} />
-          ))}
-        </View>
-      </View>
+      <ScrollView contentContainerStyle={styles.scroll}>
+        <SectionHeader title="Gym days" />
+        <DayPicker value={days} onChange={setDays} />
 
-      <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Lock window</Text>
+        <SectionHeader title="Lock window" />
         <View style={styles.timeRow}>
           <TimeStepper
             label="From"
@@ -64,10 +81,20 @@ export function OnboardingScheduleScreen({ navigation }: Props) {
             onIncrement={() => setWindowEnd((t) => stepHHMM(t, 30))}
           />
         </View>
-      </View>
+
+        <Text style={styles.summary}>
+          {days.length === 0
+            ? 'Pick at least one gym day.'
+            : `${days.length} day${days.length === 1 ? '' : 's'} a week · ${hours % 1 === 0 ? hours : hours.toFixed(1)}-hour window. Miss it and the apps unlock when it closes — but your streak resets.`}
+        </Text>
+      </ScrollView>
 
       <View style={styles.footer}>
-        <Button title="Continue" disabled={days.length === 0} onPress={next} />
+        {LOCATION_CHECK_IN ? (
+          <Button title="Continue" disabled={!valid} onPress={next} />
+        ) : (
+          <Button title="Start locking in" icon="lock-closed" disabled={!valid} loading={finishing} onPress={next} />
+        )}
       </View>
     </SafeAreaView>
   );
@@ -75,13 +102,8 @@ export function OnboardingScheduleScreen({ navigation }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  header: { padding: spacing.lg, paddingBottom: spacing.md },
-  eyebrow: { color: colors.accent, ...type.eyebrow },
-  title: { color: colors.text, ...type.display, marginTop: spacing.sm },
-  subtitle: { color: colors.textMuted, ...type.body, marginTop: spacing.sm },
-  section: { paddingHorizontal: spacing.lg, marginTop: spacing.lg },
-  sectionLabel: { color: colors.text, ...type.subtitle, marginBottom: spacing.sm },
-  dayRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  timeRow: { flexDirection: 'row', gap: spacing.md },
-  footer: { marginTop: 'auto', padding: spacing.lg },
+  scroll: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg },
+  timeRow: { flexDirection: 'row', gap: spacing.sm },
+  summary: { color: colors.textMuted, ...type.caption, fontSize: 14, lineHeight: 20, marginTop: spacing.md, marginHorizontal: spacing.xs },
+  footer: { padding: spacing.lg, paddingTop: spacing.md },
 });

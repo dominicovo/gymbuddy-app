@@ -22,3 +22,10 @@ export function formatHHMM(hhmm: string): string {
 export function stepHHMM(hhmm: string, deltaMinutes: number): string {
   return minutesToHHMM(hhmmToMinutes(hhmm) + deltaMinutes);
 }
+
+/** Length of a lock window in hours; windows that cross midnight wrap. */
+export function windowHours(start: string, end: string): number {
+  let span = hhmmToMinutes(end) - hhmmToMinutes(start);
+  if (span <= 0) span += 24 * 60;
+  return span / 60;
+}

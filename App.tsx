@@ -1,14 +1,19 @@
 import 'react-native-gesture-handler';
-import React, { useEffect } from 'react';
-import { View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Linking, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
-import { NavigationContainer, DarkTheme } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import {
+  useFonts,
+  BarlowCondensed_600SemiBold,
+  BarlowCondensed_700Bold,
+  BarlowCondensed_800ExtraBold,
+} from '@expo-google-fonts/barlow-condensed';
+import { IntroScreen } from './src/screens/auth/IntroScreen';
 import { AuthEntryScreen } from './src/screens/auth/AuthEntryScreen';
-import { AuthEmailScreen } from './src/screens/auth/AuthEmailScreen';
-import { AuthVerifyScreen } from './src/screens/auth/AuthVerifyScreen';
 import { AuthCardScreen } from './src/screens/auth/AuthCardScreen';
 import { AuthPermissionsScreen } from './src/screens/auth/AuthPermissionsScreen';
 import { OnboardingAppsScreen } from './src/screens/OnboardingAppsScreen';
@@ -27,12 +32,14 @@ import { IoniconName } from './src/types';
 import { useAppStore } from './src/store/useAppStore';
 import { useAuthStore } from './src/store/useAuthStore';
 import { colors } from './src/theme/colors';
+import { parsePairCode, usePairLinkStore } from './src/lib/pairLinks';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
 const Tab = createBottomTabNavigator<TabParamList>();
 
 const TAB_ICONS: Record<keyof TabParamList, { active: IoniconName; inactive: IoniconName }> = {
-  Unlock: { active: 'lock-closed', inactive: 'lock-closed-outline' },
+  Unlock: { active: 'today', inactive: 'today-outline' },
   Buddies: { active: 'people', inactive: 'people-outline' },
   Profile: { active: 'person', inactive: 'person-outline' },
 };
@@ -56,14 +63,15 @@ function MainTabs() {
         headerShown: false,
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textMuted,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
-        tabBarLabelStyle: { fontSize: 10, fontWeight: '500' },
+        tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
       }}
     >
       <Tab.Screen
         name="Unlock"
         component={UnlockScreen}
         options={{
+          tabBarLabel: 'Today',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? TAB_ICONS.Unlock.active : TAB_ICONS.Unlock.inactive} color={color} size={25} />
           ),
@@ -93,30 +101,65 @@ function MainTabs() {
 
 export default function App() {
   const onboardingComplete = useAppStore((s) => s.onboardingComplete);
+  const introSeen = useAppStore((s) => s.introSeen);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const authLoading = useAuthStore((s) => s.loading);
   const init = useAuthStore((s) => s.init);
+  const [fontsLoaded, fontError] = useFonts({
+    BarlowCondensed_600SemiBold,
+    BarlowCondensed_700Bold,
+    BarlowCondensed_800ExtraBold,
+  });
 
   useEffect(() => {
     init();
   }, [init]);
 
-  if (authLoading) {
+  // Pair links (https://www.gymbuddy.live/b/1234, gymbuddy://b/1234): remember
+  // the code, then open "Enter their code" once there's an account to pair.
+  const pendingCode = usePairLinkStore((s) => s.pendingCode);
+  const setPending = usePairLinkStore((s) => s.setPending);
+  const [navReady, setNavReady] = useState(false);
+
+  useEffect(() => {
+    Linking.getInitialURL().then((url) => {
+      const code = parsePairCode(url);
+      if (code) setPending(code);
+    });
+    const sub = Linking.addEventListener('url', ({ url }) => {
+      const code = parsePairCode(url);
+      if (code) setPending(code);
+    });
+    return () => sub.remove();
+  }, [setPending]);
+
+  useEffect(() => {
+    if (!pendingCode || !navReady || !isAuthenticated || !onboardingComplete) return;
+    navigationRef.navigate('ScanCode', { code: pendingCode });
+    setPending(null);
+  }, [pendingCode, navReady, isAuthenticated, onboardingComplete, setPending]);
+
+  // A font that fails to load falls back to the system face — never block on it.
+  if (authLoading || (!fontsLoaded && !fontError)) {
     return <View style={{ flex: 1, backgroundColor: colors.background }} />;
   }
 
-  const initialRouteName = !isAuthenticated ? 'AuthEntry' : !onboardingComplete ? 'OnboardingApps' : 'Main';
+  // Permissions are per-device (Screen Time can't carry over), so a signed-in
+  // user on a fresh install still starts there before the rest of onboarding.
+  // The welcome tour runs once, before the very first sign-in. Anyone who has
+  // set GymBuddy up on this phone before already knows the deal.
+  const signedOutStart = introSeen || onboardingComplete ? 'AuthEntry' : 'Intro';
+  const initialRouteName = !isAuthenticated ? signedOutStart : !onboardingComplete ? 'AuthPermissions' : 'Main';
 
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer theme={navTheme} ref={navigationRef} onReady={() => setNavReady(true)}>
       <StatusBar style="light" />
       <Stack.Navigator
         initialRouteName={initialRouteName}
         screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}
       >
+        <Stack.Screen name="Intro" component={IntroScreen} />
         <Stack.Screen name="AuthEntry" component={AuthEntryScreen} />
-        <Stack.Screen name="AuthEmail" component={AuthEmailScreen} />
-        <Stack.Screen name="AuthVerify" component={AuthVerifyScreen} />
         <Stack.Screen name="AuthCard" component={AuthCardScreen} />
         <Stack.Screen name="AuthPermissions" component={AuthPermissionsScreen} />
         <Stack.Screen name="OnboardingApps" component={OnboardingAppsScreen} />

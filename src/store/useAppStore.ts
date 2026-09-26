@@ -6,6 +6,7 @@ import { isWithinLockWindow, missedScheduledDaySince, toISODate } from '../lib/s
 import { isShieldActive, stopScreenTimeMonitoring, unlockNow, updateShieldCopy } from '../lib/screenTime';
 import { ResolvedLocation } from '../lib/location';
 import { stepHHMM } from '../lib/time';
+import { syncCheckIn, syncSchedule } from '../lib/activitySync';
 
 export interface AppSelectionSummary {
   applicationCount: number;
@@ -14,6 +15,8 @@ export interface AppSelectionSummary {
 }
 
 interface AppState {
+  /** The pre-sign-in welcome tour has been seen (or skipped) on this phone. */
+  introSeen: boolean;
   onboardingComplete: boolean;
   appSelection: AppSelectionSummary | null;
   schedule: Schedule | null;
@@ -21,6 +24,10 @@ interface AppState {
   streak: number;
   longestStreak: number;
   lastProofDate: string | null;
+  /** Exact time of the latest proof, for "Checked in at 7:12 AM". */
+  lastProofAt: string | null;
+  /** ISO date lock scheduling began — days before it don't count as missed in the history. */
+  startedAt: string | null;
   /** ISO dates (YYYY-MM-DD) proof was submitted on, for the "this week" tracker. */
   checkIns: string[];
   /** How close (meters) you need to be to your gym for proof to count. */
@@ -36,8 +43,10 @@ interface AppState {
   setCheckInRadiusMeters: (meters: number) => void;
   setGraceMinutes: (minutes: number) => void;
   setStrictMode: (enabled: boolean) => void;
+  markIntroSeen: () => void;
   completeOnboarding: () => void;
-  submitProof: () => void;
+  /** Records today's proof and unlocks. Returns the resulting streak. */
+  submitProof: () => number;
   getLockState: () => LockState;
   resetProgress: () => void;
   restartOnboarding: () => void;
@@ -46,6 +55,7 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
+      introSeen: false,
       onboardingComplete: false,
       appSelection: null,
       schedule: null,
@@ -53,6 +63,8 @@ export const useAppStore = create<AppState>()(
       streak: 0,
       longestStreak: 0,
       lastProofDate: null,
+      lastProofAt: null,
+      startedAt: null,
       checkIns: [],
       checkInRadiusMeters: 150,
       graceMinutes: 15,
@@ -60,7 +72,10 @@ export const useAppStore = create<AppState>()(
 
       setAppSelection: (summary) => set({ appSelection: summary }),
 
-      setSchedule: (schedule) => set({ schedule }),
+      setSchedule: (schedule) => {
+        set({ schedule });
+        void syncSchedule(schedule);
+      },
 
       setGymLocation: (location) => set({ gymLocation: location }),
 
@@ -70,14 +85,17 @@ export const useAppStore = create<AppState>()(
 
       setStrictMode: (enabled) => set({ strictMode: enabled }),
 
-      completeOnboarding: () => set({ onboardingComplete: true }),
+      markIntroSeen: () => set({ introSeen: true }),
+
+      completeOnboarding: () =>
+        set((state) => ({ onboardingComplete: true, startedAt: state.startedAt ?? toISODate(new Date()) })),
 
       submitProof: () => {
         const { schedule, gymLocation, lastProofDate, streak, longestStreak, checkIns } = get();
         const now = new Date();
         const today = toISODate(now);
 
-        if (lastProofDate === today) return; // already proved today
+        if (lastProofDate === today) return streak; // already proved today
 
         const continued = schedule ? !missedScheduledDaySince(schedule, lastProofDate, now) : true;
         const nextStreak = continued ? streak + 1 : 1;
@@ -89,10 +107,13 @@ export const useAppStore = create<AppState>()(
 
         set({
           lastProofDate: today,
+          lastProofAt: now.toISOString(),
           streak: nextStreak,
           longestStreak: Math.max(longestStreak, nextStreak),
           checkIns: [...checkIns, today],
         });
+        void syncCheckIn(today, nextStreak);
+        return nextStreak;
       },
 
       getLockState: () => {
@@ -111,7 +132,7 @@ export const useAppStore = create<AppState>()(
         return isWithinLockWindow(effectiveSchedule, now) ? 'locked' : 'inactive';
       },
 
-      resetProgress: () => set({ streak: 0, longestStreak: 0, lastProofDate: null, checkIns: [] }),
+      resetProgress: () => set({ streak: 0, longestStreak: 0, lastProofDate: null, lastProofAt: null, checkIns: [] }),
 
       restartOnboarding: () => {
         stopScreenTimeMonitoring();
@@ -123,6 +144,8 @@ export const useAppStore = create<AppState>()(
           streak: 0,
           longestStreak: 0,
           lastProofDate: null,
+          lastProofAt: null,
+          startedAt: null,
           checkIns: [],
         });
       },
@@ -130,6 +153,17 @@ export const useAppStore = create<AppState>()(
     {
       name: 'gymbuddy-store',
       storage: createJSONStorage(() => AsyncStorage),
+      version: 1,
+      // v0 had no start date: date it from the first check-in, or from now,
+      // so the history grid doesn't paint every earlier gym day as missed.
+      migrate: (persisted, version) => {
+        const state = persisted as Partial<AppState>;
+        if (version < 1 && !state.startedAt) {
+          const first = [...(state.checkIns ?? [])].sort()[0];
+          state.startedAt = state.onboardingComplete ? (first ?? toISODate(new Date())) : null;
+        }
+        return state as AppState;
+      },
     }
   )
 );

@@ -1,4 +1,5 @@
 import 'react-native-url-polyfill/auto';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 
@@ -18,4 +19,12 @@ export const supabase = createClient(url, anonKey, {
     persistSession: true,
     detectSessionInUrl: false,
   },
+});
+
+// Refresh tokens only while the app is in the foreground — the recommended
+// React Native setup. A session that expired in the background renews the
+// moment the app comes back, instead of failing the first request.
+AppState.addEventListener('change', (state) => {
+  if (state === 'active') void supabase.auth.startAutoRefresh();
+  else void supabase.auth.stopAutoRefresh();
 });

@@ -2,21 +2,13 @@ import React, { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { Avatar } from '../../components/Avatar';
 import { Button } from '../../components/Button';
 import { colors, radius, spacing, type } from '../../theme/colors';
 import { RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../store/useAuthStore';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AuthCard'>;
-
-function initialsFor(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '–';
-  return parts
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase())
-    .join('');
-}
 
 /** "Alex Rivera" -> "alexrivera". Empty until there's enough to work with. */
 function slugFromName(name: string): string {
@@ -76,9 +68,7 @@ export function AuthCardScreen({ navigation }: Props) {
       </View>
 
       <View style={styles.previewCard}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{initialsFor(name)}</Text>
-        </View>
+        <Avatar name={name.trim() || '?'} seed={effectiveHandle} size={64} />
         <Text style={styles.previewName}>{name.trim() || 'Your name'}</Text>
         <Text style={styles.previewHandle}>@{effectiveHandle || 'handle'}</Text>
       </View>
@@ -152,24 +142,12 @@ const styles = StyleSheet.create({
   subtitle: { color: colors.textMuted, ...type.body, marginTop: spacing.sm },
   previewCard: {
     backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: radius.xl,
     padding: spacing.lg,
     alignItems: 'center',
     marginBottom: spacing.lg,
   },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.pill,
-    backgroundColor: colors.surfaceAlt,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  avatarText: { color: colors.text, fontSize: 22, fontWeight: '800' },
-  previewName: { color: colors.text, fontSize: 18, fontWeight: '700' },
+  previewName: { color: colors.text, fontSize: 19, fontWeight: '700', marginTop: spacing.sm + 4 },
   previewHandle: { color: colors.textMuted, fontSize: 15, fontWeight: '500', marginTop: 2 },
   inputGroup: { marginBottom: spacing.md },
   inputLabel: { color: colors.textMuted, ...type.label, marginBottom: spacing.xs },
@@ -178,8 +156,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.xs,
     backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 4,

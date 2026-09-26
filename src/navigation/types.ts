@@ -3,9 +3,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 
 export type RootStackParamList = {
+  Intro: undefined;
   AuthEntry: undefined;
-  AuthEmail: undefined;
-  AuthVerify: { email: string };
   AuthCard: undefined;
   AuthPermissions: undefined;
   OnboardingApps: undefined;
@@ -15,7 +14,8 @@ export type RootStackParamList = {
   Settings: undefined;
   Proof: undefined;
   SharePairCard: undefined;
-  ScanCode: undefined;
+  /** `code` comes from a pair link; it's filled in and submitted straight away. */
+  ScanCode: { code?: string } | undefined;
   EditProfile: undefined;
 };
 
