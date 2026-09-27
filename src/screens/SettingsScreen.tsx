@@ -1,4 +1,5 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +27,7 @@ import {
 import { ResolvedLocation } from '../lib/location';
 import { GymPicker } from '../components/GymPicker';
 import { LOCATION_CHECK_IN } from '../config/features';
+import { NotificationStatus, notificationStatus, requestNotificationPermission } from '../lib/push';
 
 type Props = RootStackScreenProps<'Settings'>;
 
@@ -66,6 +68,24 @@ export function SettingsScreen({ navigation }: Props) {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [expanded, setExpanded] = useState<ExpandedSection>(null);
+  const [notifications, setNotifications] = useState<NotificationStatus | null>(null);
+
+  // Re-read on focus: they may have just changed it in the iOS Settings app.
+  useFocusEffect(
+    useCallback(() => {
+      void notificationStatus().then(setNotifications);
+    }, [])
+  );
+
+  async function changeNotifications() {
+    // iOS only shows its prompt once; after that the switch lives in the Settings app.
+    if (notifications === 'undetermined') {
+      const granted = await requestNotificationPermission();
+      setNotifications(granted ? 'granted' : 'denied');
+    } else {
+      void Linking.openSettings();
+    }
+  }
   const scrollRef = useRef<ScrollView>(null);
   // Offsets used to lift the gym search above the keyboard.
   const checkInY = useRef(0);
@@ -305,6 +325,17 @@ export function SettingsScreen({ navigation }: Props) {
             </View>
           </>
         )}
+
+        <SectionHeader title="Notifications" />
+        <ListGroup>
+          <ListRow
+            icon="notifications"
+            title="Buddy notifications"
+            subtitle="Nudges, cheers and buddy requests"
+            value={notifications === 'granted' ? 'On' : notifications === 'denied' ? 'Off' : notifications ? 'Turn on' : ''}
+            onPress={changeNotifications}
+          />
+        </ListGroup>
 
         <SectionHeader title="Account" />
         <ListGroup>

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { DayOfWeek } from '../types';
 import { toISODate } from '../lib/schedule';
+import { notifyBuddy } from '../lib/push';
 
 export type NudgeKind = 'cheer' | 'nudge';
 
@@ -208,6 +209,7 @@ export const useBuddiesStore = create<BuddiesState>()((set, get) => ({
     // request_buddy raises friendly messages itself (unknown code, your own code, rate limit).
     if (error) return { error: error.code === 'P0001' ? error.message : 'Couldn\u2019t pair right now. Check your connection and try again.' };
     const row = Array.isArray(data) ? data[0] : data;
+    if (row?.link_id) notifyBuddy({ event: row.status === 'accepted' ? 'accepted' : 'request', linkId: row.link_id });
     await get().load();
     return { error: null, name: row?.full_name || 'Buddy', accepted: row?.status === 'accepted' };
   },
@@ -218,6 +220,7 @@ export const useBuddiesStore = create<BuddiesState>()((set, get) => ({
       .update({ status: 'accepted', accepted_at: new Date().toISOString() })
       .eq('id', linkId);
     if (error) return { error: error.message };
+    notifyBuddy({ event: 'accepted', linkId });
     await get().load();
     return { error: null };
   },
@@ -243,14 +246,16 @@ export const useBuddiesStore = create<BuddiesState>()((set, get) => ({
 
     const key = `${buddyUserId}:${kind}`;
     set((s) => ({ sentToday: [...s.sentToday, key] }));
-    const { error } = await supabase
+    const { data: inserted, error } = await supabase
       .from('nudges')
-      .insert({ from_id: me, to_id: buddyUserId, kind, day: toISODate(new Date()) });
+      .insert({ from_id: me, to_id: buddyUserId, kind, day: toISODate(new Date()) })
+      .select('id');
     // Already sent one today counts as sent.
     if (error && error.code !== '23505') {
       set((s) => ({ sentToday: s.sentToday.filter((k) => k !== key) }));
       return { error: error.message };
     }
+    notifyBuddy({ event: 'nudges', ids: (inserted ?? []).map((r) => r.id) });
     return { error: null };
   },
 
@@ -267,16 +272,19 @@ export const useBuddiesStore = create<BuddiesState>()((set, get) => ({
     const day = toISODate(new Date());
     set((s) => ({ sentToday: [...s.sentToday, ...keys] }));
     // ON CONFLICT DO NOTHING, so one that raced in from another device doesn't fail the batch.
-    const { error } = await supabase
+    const { data: inserted, error } = await supabase
       .from('nudges')
       .upsert(
         targets.map((to_id) => ({ from_id: me, to_id, kind, day })),
         { onConflict: 'from_id,to_id,kind,day', ignoreDuplicates: true }
-      );
+      )
+      .select('id');
     if (error) {
       set((s) => ({ sentToday: s.sentToday.filter((k) => !keys.includes(k)) }));
       return { error: error.message, sent: 0 };
     }
+    // Only newly inserted rows come back, so a duplicate never notifies twice.
+    notifyBuddy({ event: 'nudges', ids: (inserted ?? []).map((r) => r.id) });
     return { error: null, sent: targets.length };
   },
 

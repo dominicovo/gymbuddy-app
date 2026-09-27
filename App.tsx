@@ -33,6 +33,8 @@ import { useAppStore } from './src/store/useAppStore';
 import { useAuthStore } from './src/store/useAuthStore';
 import { colors } from './src/theme/colors';
 import { parsePairCode, usePairLinkStore } from './src/lib/pairLinks';
+import * as Notifications from 'expo-notifications';
+import { registerPushToken } from './src/lib/push';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
@@ -138,6 +140,33 @@ export default function App() {
     navigationRef.navigate('ScanCode', { code: pendingCode });
     setPending(null);
   }, [pendingCode, navReady, isAuthenticated, onboardingComplete, setPending]);
+
+  // Push: link this phone to the account whenever someone is signed in, and
+  // again if iOS ever hands out a new token.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    void registerPushToken();
+    const sub = Notifications.addPushTokenListener(() => void registerPushToken());
+    return () => sub.remove();
+  }, [isAuthenticated]);
+
+  // Tapping a nudge, cheer or buddy request opens the Buddies tab — including
+  // when the tap is what launched the app.
+  const [openBuddies, setOpenBuddies] = useState(false);
+  useEffect(() => {
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) setOpenBuddies(true);
+    });
+    const sub = Notifications.addNotificationResponseReceivedListener(() => setOpenBuddies(true));
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!openBuddies || !navReady || !isAuthenticated || !onboardingComplete) return;
+    navigationRef.navigate('Main', { screen: 'Buddies' });
+    setOpenBuddies(false);
+    void Notifications.clearLastNotificationResponseAsync();
+  }, [openBuddies, navReady, isAuthenticated, onboardingComplete]);
 
   // A font that fails to load falls back to the system face — never block on it.
   if (authLoading || (!fontsLoaded && !fontError)) {

@@ -8,6 +8,7 @@ import { colors, radius, spacing, type } from '../../theme/colors';
 import { IoniconName } from '../../types';
 import { RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../store/useAuthStore';
+import { requestNotificationPermission } from '../../lib/push';
 import { requestScreenTimeAuthorization } from '../../lib/screenTime';
 import { requestLocationPermission } from '../../lib/location';
 import { LOCATION_CHECK_IN } from '../../config/features';
@@ -32,7 +33,7 @@ const ALL_ROWS: PermissionRow[] = [
     key: 'notifications',
     icon: 'notifications-outline',
     label: 'Notifications',
-    hint: 'Window reminders, buddy check-ins, streak warnings.',
+    hint: 'When a buddy nudges you, cheers you on or wants to pair up.',
   },
   {
     key: 'location',
@@ -60,8 +61,8 @@ export function AuthPermissionsScreen({ navigation }: Props) {
         const granted = await requestLocationPermission();
         setPermission('location', granted);
       } else {
-        // No notification system wired up yet — flip the UI state only.
-        setPermission('notifications', true);
+        const granted = await requestNotificationPermission();
+        setPermission('notifications', granted);
       }
     } catch (error) {
       console.warn(`requesting ${key} permission failed`, error);

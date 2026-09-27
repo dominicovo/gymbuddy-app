@@ -6,7 +6,7 @@ import { isWithinLockWindow, missedScheduledDaySince, toISODate } from '../lib/s
 import { isShieldActive, stopScreenTimeMonitoring, unlockNow, updateShieldCopy } from '../lib/screenTime';
 import { ResolvedLocation } from '../lib/location';
 import { stepHHMM } from '../lib/time';
-import { syncCheckIn, syncSchedule } from '../lib/activitySync';
+import { fetchServerProgress, syncCheckIn, syncSchedule } from '../lib/activitySync';
 
 export interface AppSelectionSummary {
   applicationCount: number;
@@ -17,6 +17,12 @@ export interface AppSelectionSummary {
 interface AppState {
   /** The pre-sign-in welcome tour has been seen (or skipped) on this phone. */
   introSeen: boolean;
+  /**
+   * The account everything below belongs to. Progress lives on the phone, so
+   * without this, whoever signs in next would inherit the last person's
+   * streak, schedule and locked apps.
+   */
+  ownerId: string | null;
   onboardingComplete: boolean;
   appSelection: AppSelectionSummary | null;
   schedule: Schedule | null;
@@ -50,12 +56,45 @@ interface AppState {
   getLockState: () => LockState;
   resetProgress: () => void;
   restartOnboarding: () => void;
+  /** Called on every sign-in: makes the local progress this account's own. */
+  adoptAccount: (userId: string) => Promise<void>;
 }
+
+// Everything that belongs to one person, as a fresh account starts out.
+const EMPTY_PROGRESS = {
+  onboardingComplete: false,
+  appSelection: null,
+  schedule: null,
+  gymLocation: null,
+  streak: 0,
+  longestStreak: 0,
+  lastProofDate: null,
+  lastProofAt: null,
+  startedAt: null,
+  checkIns: [] as string[],
+  checkInRadiusMeters: 150,
+  graceMinutes: 15,
+  strictMode: true,
+};
+
+function persistedStateLoaded(): Promise<void> {
+  if (useAppStore.persist.hasHydrated()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = useAppStore.persist.onFinishHydration(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
+// Session restore and the auth listener can both adopt at startup; share the work.
+let adopting: { userId: string; promise: Promise<void> } | null = null;
 
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
       introSeen: false,
+      ownerId: null,
       onboardingComplete: false,
       appSelection: null,
       schedule: null,
@@ -133,6 +172,49 @@ export const useAppStore = create<AppState>()(
       },
 
       resetProgress: () => set({ streak: 0, longestStreak: 0, lastProofDate: null, lastProofAt: null, checkIns: [] }),
+
+      adoptAccount: (userId) => {
+        if (adopting?.userId === userId) return adopting.promise;
+
+        const promise = (async () => {
+          // Saved progress loads asynchronously; deciding before it has would
+          // mistake a returning user for a new one and overwrite their data.
+          await persistedStateLoaded();
+          const { ownerId, onboardingComplete } = get();
+          if (ownerId === userId) return;
+          const server = await fetchServerProgress(userId);
+
+          // Set up before progress was tied to accounts: it belongs to this
+          // account if the server knows it, otherwise it's someone else's.
+          // Offline (no answer), keep it rather than wipe someone's streak.
+          if (ownerId === null && onboardingComplete && (server === null || server.hasHistory)) {
+            set({ ownerId: userId });
+            return;
+          }
+
+          // Someone else's progress: stop locking their apps, then start this
+          // account from its own history. Apps are picked per phone, so setup
+          // runs again, with this account's schedule filled in.
+          if (onboardingComplete) stopScreenTimeMonitoring();
+          const days = server?.checkIns ?? [];
+          const lastDay = days.length ? days[days.length - 1] : null;
+          set({
+            ...EMPTY_PROGRESS,
+            ownerId: userId,
+            schedule: server?.schedule ?? null,
+            streak: server?.streak ?? 0,
+            longestStreak: server?.streak ?? 0,
+            checkIns: days,
+            lastProofDate: lastDay,
+            lastProofAt: server?.lastCheckedInAt ?? null,
+            startedAt: days[0] ?? null,
+          });
+        })().finally(() => {
+          adopting = null;
+        });
+        adopting = { userId, promise };
+        return promise;
+      },
 
       restartOnboarding: () => {
         stopScreenTimeMonitoring();

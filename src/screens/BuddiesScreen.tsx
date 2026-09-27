@@ -25,6 +25,7 @@ import { Buddy, InboxNudge, NudgeKind, useBuddiesStore } from '../store/useBuddi
 import { useAuthStore } from '../store/useAuthStore';
 import { RootStackParamList, TabScreenProps } from '../navigation/types';
 import { dayOfWeek, toISODate } from '../lib/schedule';
+import { notificationStatus, requestNotificationPermission } from '../lib/push';
 
 type Props = TabScreenProps<'Buddies'>;
 
@@ -93,12 +94,21 @@ export function BuddiesScreen({ navigation }: Props) {
   const markInboxSeen = useBuddiesStore((s) => s.markInboxSeen);
   const signOut = useAuthStore((s) => s.signOut);
 
+  // Until they've answered the iOS prompt, offer notifications here, where they matter.
+  const [askNotifications, setAskNotifications] = useState(false);
+
   useFocusEffect(
     React.useCallback(() => {
       void load();
+      void notificationStatus().then((status) => setAskNotifications(status === 'undetermined'));
       return subscribe();
     }, [load, subscribe])
   );
+
+  async function turnOnNotifications() {
+    await requestNotificationPermission();
+    setAskNotifications(false);
+  }
 
   const today = toISODate(new Date());
   const todayDow = dayOfWeek(new Date());
@@ -246,6 +256,22 @@ export function BuddiesScreen({ navigation }: Props) {
 
       {buddies.length > 0 && (
         <TodaySummary inCount={groups.in.length} dueCount={groups.due.length} restCount={groups.rest.length} gymToday={gymToday} />
+      )}
+
+      {askNotifications && (
+        <Pressable
+          style={({ pressed }) => [styles.notifyCard, pressed && { opacity: 0.8 }]}
+          onPress={turnOnNotifications}
+          accessibilityRole="button"
+          accessibilityLabel="Turn on buddy notifications"
+        >
+          <Ionicons name="notifications" size={20} color={colors.accent} />
+          <View style={styles.notifyText}>
+            <Text style={styles.notifyTitle}>Know when buddies nudge you</Text>
+            <Text style={styles.notifyBody}>Get notified about nudges, cheers and buddy requests.</Text>
+          </View>
+          <Text style={styles.notifyAction}>Turn on</Text>
+        </Pressable>
       )}
 
       {inbox.length > 0 && (
@@ -567,6 +593,19 @@ const styles = StyleSheet.create({
   legendLabel: { color: colors.textMuted, fontSize: 13, fontWeight: '500' },
   legendValue: { color: colors.text, fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] },
 
+  notifyCard: {
+    marginTop: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm + 4,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+  },
+  notifyText: { flex: 1 },
+  notifyTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
+  notifyBody: { color: colors.textMuted, fontSize: 14, lineHeight: 19, marginTop: 2 },
+  notifyAction: { color: colors.accent, fontSize: 15, fontWeight: '700' },
   inbox: {
     marginTop: spacing.md,
     backgroundColor: colors.accentSurface,

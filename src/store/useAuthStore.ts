@@ -3,8 +3,10 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import { GoogleSignin, isErrorWithCode, isSuccessResponse, statusCodes } from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { unregisterPushToken } from '../lib/push';
 import { describeAuthError } from '../lib/authErrors';
 import { useBuddiesStore } from './useBuddiesStore';
+import { useAppStore } from './useAppStore';
 
 export type AuthProvider = 'apple' | 'google';
 
@@ -125,7 +127,9 @@ export const useAuthStore = create<AuthState>()((set, get) => {
 
   /** Pulls the profile into the store and marks the user signed in. */
   async function adopt(userId: string, email: string | null, provider: AuthProvider | null) {
-    const profile = await loadProfile(userId);
+    // Before anything routes on it: the phone's streak, schedule and apps
+    // must be this account's, not whoever signed in here last.
+    const [profile] = await Promise.all([loadProfile(userId), useAppStore.getState().adoptAccount(userId)]);
     set({
       isAuthenticated: true,
       provider,
@@ -352,6 +356,8 @@ export const useAuthStore = create<AuthState>()((set, get) => {
     signOut: async () => {
       // Clear the bypass first, so the auth listener is free to reset state again.
       set({ bypassed: false });
+      // While the session still exists: this phone stops getting this account's notifications.
+      await unregisterPushToken();
       if (get().provider === 'google') {
         await GoogleSignin.signOut().catch(() => {});
       }
@@ -374,6 +380,9 @@ export const useAuthStore = create<AuthState>()((set, get) => {
         console.warn('delete_account failed', error.message);
         return { error: describeAuthError(error, 'Could not delete your account. Please try again.') };
       }
+      // Nothing of the deleted account stays on the phone — including its app locks.
+      useAppStore.getState().restartOnboarding();
+      useAppStore.setState({ ownerId: null });
       if (get().provider === 'google') await GoogleSignin.revokeAccess().catch(() => {});
       await AsyncStorage.removeItem(profileCacheKey(userId)).catch(() => {});
       await get().signOut();

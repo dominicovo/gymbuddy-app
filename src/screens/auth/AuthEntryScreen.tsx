@@ -29,9 +29,11 @@ export function AuthEntryScreen({ navigation }: Props) {
   }, []);
 
   function enter() {
+    // Read fresh: signing in may have just reset setup for a different account.
+    const done = useAppStore.getState().onboardingComplete;
     navigation.reset({
       index: 0,
-      routes: [{ name: onboardingComplete ? 'Main' : 'AuthPermissions' }],
+      routes: [{ name: done ? 'Main' : 'AuthPermissions' }],
     });
   }
 
