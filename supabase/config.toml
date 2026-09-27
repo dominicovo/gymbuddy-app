@@ -1,0 +1,7 @@
+project_id = "gymbuddy"
+
+# notify checks the caller itself (auth.getUser). The gateway's own JWT check
+# only understands the legacy HS256 keys and rejects this project's ES256
+# user tokens, so it must stay off.
+[functions.notify]
+verify_jwt = false

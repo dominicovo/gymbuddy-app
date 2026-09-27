@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
     return json({ error: 'Unknown event' }, 400);
   }
 
+  console.log(`notify ${input.event} from ${me}: ${pushes.length} push(es) to send`);
   let sent = 0;
   try {
     for (const push of pushes) sent += await deliver(admin, push);
@@ -102,15 +103,21 @@ Deno.serve(async (req) => {
 /** Claims the push_log key, then sends to every device the user has. Returns devices reached. */
 async function deliver(admin: SupabaseClient, push: Push): Promise<number> {
   const { error: claimed } = await admin.from('push_log').insert({ key: push.key });
-  if (claimed) return 0; // already sent (duplicate key) or log unavailable
+  if (claimed) {
+    console.log(`skip ${push.key}: ${claimed.code === '23505' ? 'already sent' : claimed.message}`);
+    return 0;
+  }
 
-  const { data: tokens } = await admin.from('push_tokens').select('token').eq('user_id', push.userId);
+  const { data: tokens, error: tokensError } = await admin.from('push_tokens').select('token').eq('user_id', push.userId);
+  if (tokensError) console.error('push_tokens read failed', tokensError.message);
+  console.log(`${push.key} (${push.type}) -> ${push.userId}: ${tokens?.length ?? 0} phone(s)`);
   let reached = 0;
   for (const { token } of tokens ?? []) {
     const result = await sendApns(token, {
       aps: { alert: { title: push.title, body: push.body }, sound: 'default', 'thread-id': 'buddies' },
       gb: { type: push.type },
     });
+    console.log(`  …${token.slice(-6)}: ${result}`);
     if (result === 'ok') reached++;
     else if (result === 'gone') await admin.from('push_tokens').delete().eq('token', token);
   }
@@ -122,8 +129,11 @@ async function deliver(admin: SupabaseClient, push: Push): Promise<number> {
  * sandbox ones. Try production first and fall back if Apple says it's the other.
  */
 async function sendApns(token: string, payload: unknown): Promise<'ok' | 'gone' | 'failed'> {
+  let wrongEnvironment = 0;
   for (const host of ['api.push.apple.com', 'api.sandbox.push.apple.com']) {
-    const res = await fetch(`https://${host}/3/device/${token}`, {
+    let res: Response;
+    try {
+      res = await fetch(`https://${host}/3/device/${token}`, {
       method: 'POST',
       headers: {
         authorization: `bearer ${await providerToken()}`,
@@ -133,23 +143,39 @@ async function sendApns(token: string, payload: unknown): Promise<'ok' | 'gone' 
         'content-type': 'application/json',
       },
       body: JSON.stringify(payload),
-    });
+      });
+    } catch (error) {
+      console.error('APNs request failed', host, String(error));
+      return 'failed';
+    }
     if (res.ok) return 'ok';
     const reason = (await res.json().catch(() => ({})))?.reason as string | undefined;
     if (res.status === 410 || reason === 'Unregistered') return 'gone';
-    if (reason === 'BadDeviceToken') continue; // wrong environment — try the other one
+    console.log(`  APNs ${host}: ${res.status} ${reason ?? ''}`);
+    // Token or key is for the other environment — try it before giving up.
+    if (reason === 'BadDeviceToken') {
+      wrongEnvironment++;
+      continue;
+    }
+    if (reason === 'BadEnvironmentKeyInToken') {
+      console.error(`APNs key isn't enabled for ${host} — set the key to "Sandbox & Production"`);
+      continue;
+    }
     console.error('APNs rejected push', host, res.status, reason);
     return 'failed';
   }
-  return 'gone'; // not valid in either environment
+  // Only forget the phone when Apple says the token itself is bad in both
+  // environments — never because of our own key configuration.
+  return wrongEnvironment === 2 ? 'gone' : 'failed';
 }
 
 // APNs provider token: an ES256 JWT, valid for up to an hour. Reused for 50 minutes.
-let cached: { jwt: string; at: number } | null = null;
+// Keyed by Key ID, so swapping the APNs key never reuses a token from the old one.
+let cached: { jwt: string; at: number; keyId: string } | null = null;
 
 async function providerToken(): Promise<string> {
-  if (cached && Date.now() - cached.at < 50 * 60 * 1000) return cached.jwt;
   const keyId = Deno.env.get('APNS_KEY_ID');
+  if (cached && cached.keyId === keyId && Date.now() - cached.at < 50 * 60 * 1000) return cached.jwt;
   const pem = Deno.env.get('APNS_PRIVATE_KEY');
   if (!keyId || !pem) throw new Error('APNS_KEY_ID / APNS_PRIVATE_KEY secrets are not set');
 
@@ -166,7 +192,7 @@ async function providerToken(): Promise<string> {
   // WebCrypto's ECDSA signature is already the raw r||s form JWS expects.
   const signature = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, new TextEncoder().encode(unsigned));
   const jwt = `${unsigned}.${b64url(new Uint8Array(signature))}`;
-  cached = { jwt, at: Date.now() };
+  cached = { jwt, at: Date.now(), keyId };
   return jwt;
 }
 

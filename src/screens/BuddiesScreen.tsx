@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { Swipeable } from 'react-native-gesture-handler';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Avatar } from '../components/Avatar';
 import { Button } from '../components/Button';
@@ -102,7 +103,7 @@ export function BuddiesScreen({ navigation }: Props) {
       void load();
       void notificationStatus().then((status) => setAskNotifications(status === 'undetermined'));
       return subscribe();
-    }, [load, subscribe])
+    }, [load, subscribe]),
   );
 
   async function turnOnNotifications() {
@@ -168,9 +169,7 @@ export function BuddiesScreen({ navigation }: Props) {
     const who = `${n} ${n === 1 ? 'buddy' : 'buddies'}`;
     Alert.alert(
       bulk.kind === 'nudge' ? `Nudge ${who}?` : `Cheer ${who}?`,
-      bulk.kind === 'nudge'
-        ? 'Everyone still to go gets one nudge for today.'
-        : 'Everyone who checked in gets one cheer for today.',
+      bulk.kind === 'nudge' ? 'Everyone still to go gets one nudge for today.' : 'Everyone who checked in gets one cheer for today.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -180,13 +179,16 @@ export function BuddiesScreen({ navigation }: Props) {
             if (error) Alert.alert('Not sent', error);
           },
         },
-      ]
+      ],
     );
   }
 
+  // Removing is deliberate: swipe the row left, tap Remove, then confirm.
+  const openRow = useRef<Swipeable | null>(null);
+
   function confirmRemove(b: Buddy) {
     Alert.alert('Remove buddy?', `You'll stop seeing ${b.name}'s check-ins, and they'll stop seeing yours.`, [
-      { text: 'Cancel', style: 'cancel' },
+      { text: 'Cancel', style: 'cancel', onPress: () => openRow.current?.close() },
       {
         text: 'Remove',
         style: 'destructive',
@@ -199,21 +201,20 @@ export function BuddiesScreen({ navigation }: Props) {
   }
 
   function openActions(b: Buddy, status: TodayStatus) {
-    const kind = nudgesReady ? SECTION_META[status].bulk?.kind ?? null : null;
+    const kind = nudgesReady ? (SECTION_META[status].bulk?.kind ?? null) : null;
     const canSend = kind !== null && !sentToday.includes(`${b.userId}:${kind}`);
-    const options = [...(canSend ? [kind === 'cheer' ? 'Send a cheer' : 'Send a nudge'] : []), 'Remove buddy', 'Cancel'];
+    if (!canSend) return; // removing lives behind a swipe, so there's nothing else to offer
+    const options = [kind === 'cheer' ? 'Send a cheer' : 'Send a nudge', 'Cancel'];
     ActionSheetIOS.showActionSheetWithOptions(
       {
         title: b.name,
         message: b.handle ? `@${b.handle} · ${b.streak}-day streak` : undefined,
         options,
-        destructiveButtonIndex: options.indexOf('Remove buddy'),
         cancelButtonIndex: options.length - 1,
       },
       (index) => {
-        if (options[index] === 'Remove buddy') confirmRemove(b);
-        else if (canSend && index === 0) void send(b, kind!);
-      }
+        if (index === 0) void send(b, kind!);
+      },
     );
   }
 
@@ -225,7 +226,9 @@ export function BuddiesScreen({ navigation }: Props) {
   const header = (
     <LargeHeader
       title="Buddies"
-      right={<IconButton icon="person-add" tone="accent" onPress={() => navigation.navigate('SharePairCard')} accessibilityLabel="Add a buddy" />}
+      right={
+        <IconButton icon="person-add" tone="accent" onPress={() => navigation.navigate('SharePairCard')} accessibilityLabel="Add a buddy" />
+      }
     />
   );
 
@@ -397,9 +400,7 @@ export function BuddiesScreen({ navigation }: Props) {
         </EmptyState>
       </View>
     ) : (
-      <Text style={styles.noMatches}>
-        {needle ? `No buddies match “${query.trim()}”.` : 'Nobody here right now.'}
-      </Text>
+      <Text style={styles.noMatches}>{needle ? `No buddies match “${query.trim()}”.` : 'Nobody here right now.'}</Text>
     );
 
   return (
@@ -415,10 +416,15 @@ export function BuddiesScreen({ navigation }: Props) {
         ListHeaderComponent={listHeader}
         ListEmptyComponent={listEmpty}
         ListFooterComponent={
-          outgoingPending > 0 ? (
-            <Text style={styles.pendingNote}>
-              {outgoingPending} request{outgoingPending === 1 ? '' : 's'} sent · waiting for them to accept
-            </Text>
+          buddies.length > 0 || outgoingPending > 0 ? (
+            <View>
+              {outgoingPending > 0 && (
+                <Text style={styles.pendingNote}>
+                  {outgoingPending} request{outgoingPending === 1 ? '' : 's'} sent · waiting for them to accept
+                </Text>
+              )}
+              {buddies.length > 0 && <Text style={styles.pendingNote}>Swipe left on a buddy to remove them.</Text>}
+            </View>
           ) : null
         }
         initialNumToRender={20}
@@ -472,41 +478,65 @@ export function BuddiesScreen({ navigation }: Props) {
           return (
             <View style={[styles.rowCard, first && styles.rowFirst, last && styles.rowLast]}>
               {!first && <View style={styles.hairline} />}
-              <ListRow
-                title={b.name}
-                subtitle={subtitle}
-                leading={<Avatar name={b.name} seed={b.userId} uri={b.avatarUrl} size={38} />}
-                onPress={() => openActions(b, status)}
-                accessibilityLabel={`${b.name}, ${SECTION_META[status].title}, ${b.streak} day streak`}
-                trailing={
-                  <View style={styles.rowTrailing}>
-                    <View style={styles.streak}>
-                      <Ionicons name="flame" size={13} color={b.streak > 0 ? colors.warning : colors.textFaint} />
-                      <Text style={[styles.streakText, b.streak === 0 && { color: colors.textFaint }]}>{b.streak}</Text>
-                    </View>
-                    {kind && nudgesReady ? (
-                      <Pressable
-                        onPress={() => void send(b, kind)}
-                        disabled={sent}
-                        hitSlop={6}
-                        accessibilityRole="button"
-                        accessibilityLabel={sent ? 'Sent' : kind === 'cheer' ? `Cheer ${b.name}` : `Nudge ${b.name}`}
-                        style={({ pressed }) => [
-                          styles.action,
-                          { backgroundColor: sent ? colors.surfaceAlt : kind === 'cheer' ? colors.successMuted : colors.warningMuted },
-                          pressed && { opacity: 0.7 },
-                        ]}
-                      >
-                        <Ionicons
-                          name={sent ? 'checkmark' : kind === 'cheer' ? 'hand-left' : 'megaphone'}
-                          size={15}
-                          color={sent ? colors.textMuted : kind === 'cheer' ? colors.success : colors.warning}
-                        />
-                      </Pressable>
-                    ) : null}
-                  </View>
-                }
-              />
+              <Swipeable
+                friction={2}
+                rightThreshold={48}
+                overshootRight={false}
+                onSwipeableOpen={(_direction, swipeable) => {
+                  // One open row at a time.
+                  if (openRow.current && openRow.current !== swipeable) openRow.current.close();
+                  openRow.current = swipeable;
+                }}
+                renderRightActions={() => (
+                  <Pressable
+                    style={({ pressed }) => [styles.removeAction, pressed && { opacity: 0.85 }]}
+                    onPress={() => confirmRemove(b)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${b.name}`}
+                  >
+                    <Ionicons name="person-remove" size={18} color={colors.textOnAccent} />
+                    <Text style={styles.removeText}>Remove</Text>
+                  </Pressable>
+                )}
+              >
+                <View style={styles.rowFace}>
+                  <ListRow
+                    title={b.name}
+                    subtitle={subtitle}
+                    leading={<Avatar name={b.name} seed={b.userId} uri={b.avatarUrl} size={38} />}
+                    onPress={() => openActions(b, status)}
+                    accessibilityLabel={`${b.name}, ${SECTION_META[status].title}, ${b.streak} day streak`}
+                    trailing={
+                      <View style={styles.rowTrailing}>
+                        <View style={styles.streak}>
+                          <Ionicons name="flame" size={13} color={b.streak > 0 ? colors.warning : colors.textFaint} />
+                          <Text style={[styles.streakText, b.streak === 0 && { color: colors.textFaint }]}>{b.streak}</Text>
+                        </View>
+                        {kind && nudgesReady ? (
+                          <Pressable
+                            onPress={() => void send(b, kind)}
+                            disabled={sent}
+                            hitSlop={6}
+                            accessibilityRole="button"
+                            accessibilityLabel={sent ? 'Sent' : kind === 'cheer' ? `Cheer ${b.name}` : `Nudge ${b.name}`}
+                            style={({ pressed }) => [
+                              styles.action,
+                              { backgroundColor: sent ? colors.surfaceAlt : kind === 'cheer' ? colors.successMuted : colors.warningMuted },
+                              pressed && { opacity: 0.7 },
+                            ]}
+                          >
+                            <Ionicons
+                              name={sent ? 'checkmark' : kind === 'cheer' ? 'hand-left' : 'megaphone'}
+                              size={15}
+                              color={sent ? colors.textMuted : kind === 'cheer' ? colors.success : colors.warning}
+                            />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    }
+                  />
+                </View>
+              </Swipeable>
             </View>
           );
         }}
@@ -516,7 +546,17 @@ export function BuddiesScreen({ navigation }: Props) {
 }
 
 /** The whole day at a glance: who's in, who's still to go, who's off. */
-function TodaySummary({ inCount, dueCount, restCount, gymToday }: { inCount: number; dueCount: number; restCount: number; gymToday: number }) {
+function TodaySummary({
+  inCount,
+  dueCount,
+  restCount,
+  gymToday,
+}: {
+  inCount: number;
+  dueCount: number;
+  restCount: number;
+  gymToday: number;
+}) {
   const total = inCount + dueCount + restCount;
   return (
     <View
@@ -556,7 +596,19 @@ function LegendItem({ color, label, value }: { color: string; label: string; val
   );
 }
 
-function Chip({ label, count, active, dot, onPress }: { label: string; count: number; active: boolean; dot?: string; onPress: () => void }) {
+function Chip({
+  label,
+  count,
+  active,
+  dot,
+  onPress,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  dot?: string;
+  onPress: () => void;
+}) {
   return (
     <Pressable
       onPress={onPress}
@@ -689,6 +741,15 @@ const styles = StyleSheet.create({
 
   // Rows render one at a time (virtualised), so each draws its own slice of the rounded group.
   rowCard: { backgroundColor: colors.surface, overflow: 'hidden' },
+  rowFace: { backgroundColor: colors.surface },
+  removeAction: {
+    width: 96,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  removeText: { color: colors.textOnAccent, fontSize: 13, fontWeight: '700' },
   rowFirst: { borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg },
   rowLast: { borderBottomLeftRadius: radius.lg, borderBottomRightRadius: radius.lg },
   hairline: { height: StyleSheet.hairlineWidth, backgroundColor: colors.borderStrong, marginLeft: 68 },

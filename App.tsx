@@ -1,6 +1,7 @@
 import 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import React, { useEffect, useState } from 'react';
-import { Linking, View } from 'react-native';
+import { AppState, Linking, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { NavigationContainer, DarkTheme, createNavigationContainerRef } from '@react-navigation/native';
@@ -150,7 +151,15 @@ export default function App() {
     const sub = Notifications.addPushTokenListener((token) => {
       if (typeof token.data === 'string') void registerPushToken(token.data);
     });
-    return () => sub.remove();
+    // Coming back to the app re-claims this phone, so a registration lost
+    // server-side (or taken by another account here) heals on its own.
+    const appState = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void registerPushToken();
+    });
+    return () => {
+      sub.remove();
+      appState.remove();
+    };
   }, [isAuthenticated]);
 
   // Tapping a nudge, cheer or buddy request opens the Buddies tab — including
@@ -184,26 +193,28 @@ export default function App() {
   const initialRouteName = !isAuthenticated ? signedOutStart : !onboardingComplete ? 'AuthPermissions' : 'Main';
 
   return (
-    <NavigationContainer theme={navTheme} ref={navigationRef} onReady={() => setNavReady(true)}>
-      <StatusBar style="light" />
-      <Stack.Navigator
-        initialRouteName={initialRouteName}
-        screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}
-      >
-        <Stack.Screen name="Intro" component={IntroScreen} />
-        <Stack.Screen name="AuthEntry" component={AuthEntryScreen} />
-        <Stack.Screen name="AuthCard" component={AuthCardScreen} />
-        <Stack.Screen name="AuthPermissions" component={AuthPermissionsScreen} />
-        <Stack.Screen name="OnboardingApps" component={OnboardingAppsScreen} />
-        <Stack.Screen name="OnboardingSchedule" component={OnboardingScheduleScreen} />
-        <Stack.Screen name="OnboardingGym" component={OnboardingGymScreen} />
-        <Stack.Screen name="Main" component={MainTabs} />
-        <Stack.Screen name="Settings" component={SettingsScreen} />
-        <Stack.Screen name="Proof" component={ProofScreen} options={{ presentation: 'modal' }} />
-        <Stack.Screen name="SharePairCard" component={SharePairCardScreen} options={{ presentation: 'modal' }} />
-        <Stack.Screen name="ScanCode" component={ScanCodeScreen} options={{ presentation: 'modal' }} />
-        <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ presentation: 'modal' }} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
+      <NavigationContainer theme={navTheme} ref={navigationRef} onReady={() => setNavReady(true)}>
+        <StatusBar style="light" />
+        <Stack.Navigator
+          initialRouteName={initialRouteName}
+          screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}
+        >
+          <Stack.Screen name="Intro" component={IntroScreen} />
+          <Stack.Screen name="AuthEntry" component={AuthEntryScreen} />
+          <Stack.Screen name="AuthCard" component={AuthCardScreen} />
+          <Stack.Screen name="AuthPermissions" component={AuthPermissionsScreen} />
+          <Stack.Screen name="OnboardingApps" component={OnboardingAppsScreen} />
+          <Stack.Screen name="OnboardingSchedule" component={OnboardingScheduleScreen} />
+          <Stack.Screen name="OnboardingGym" component={OnboardingGymScreen} />
+          <Stack.Screen name="Main" component={MainTabs} />
+          <Stack.Screen name="Settings" component={SettingsScreen} />
+          <Stack.Screen name="Proof" component={ProofScreen} options={{ presentation: 'modal' }} />
+          <Stack.Screen name="SharePairCard" component={SharePairCardScreen} options={{ presentation: 'modal' }} />
+          <Stack.Screen name="ScanCode" component={ScanCodeScreen} options={{ presentation: 'modal' }} />
+          <Stack.Screen name="EditProfile" component={EditProfileScreen} options={{ presentation: 'modal' }} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </GestureHandlerRootView>
   );
 }

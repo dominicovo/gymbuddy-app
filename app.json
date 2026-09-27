@@ -9,7 +9,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "bundleIdentifier": "com.dominiceburuoh.gymbuddy",
-      "buildNumber": "13",
+      "buildNumber": "14",
       "appleTeamId": "GA5P2J5N3R",
       "supportsTablet": false,
       "usesAppleSignIn": true,

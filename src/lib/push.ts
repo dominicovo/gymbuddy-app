@@ -31,9 +31,10 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return granted;
 }
 
-// What this phone last registered, so the same token isn't sent twice and
-// sign-out knows what to remove without asking iOS again.
-let registered: { userId: string; token: string } | null = null;
+// What this phone last registered, so sign-out knows what to remove without
+// asking iOS again, and a burst of calls (fetch + token event) sends it once.
+let registered: { userId: string; token: string; at: number } | null = null;
+const REGISTER_DEDUPE_MS = 60 * 1000;
 
 async function deviceToken(): Promise<string | null> {
   if (!(await Notifications.getPermissionsAsync()).granted) return null;
@@ -55,14 +56,17 @@ export async function registerPushToken(token?: string): Promise<void> {
     if (!userId) return;
     const deviceTokenHex = token ?? (await deviceToken());
     if (!deviceTokenHex) return;
-    if (registered?.userId === userId && registered.token === deviceTokenHex) return;
+    // Only skip a repeat within a minute: the server may have dropped the row
+    // since (stale-token cleanup, another account on this phone), so later
+    // calls — every time the app comes to the foreground — re-claim it.
+    if (registered?.userId === userId && registered.token === deviceTokenHex && Date.now() - registered.at < REGISTER_DEDUPE_MS) return;
     const { error } = await supabase.rpc('register_push_token', { device_token: deviceTokenHex });
     if (error) {
       // PGRST202: the server hasn't been set up for push yet (migration 008).
       if (error.code !== 'PGRST202') console.warn('register_push_token failed', error.message);
       return;
     }
-    registered = { userId, token: deviceTokenHex };
+    registered = { userId, token: deviceTokenHex, at: Date.now() };
   } catch (error) {
     console.warn('registerPushToken failed', error);
   }
