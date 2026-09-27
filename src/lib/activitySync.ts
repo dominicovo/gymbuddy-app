@@ -17,7 +17,9 @@ export async function syncCheckIn(day: string, streak: number): Promise<void> {
   if (!userId) return;
 
   const [checkIn, profile] = await Promise.all([
-    supabase.from('check_ins').upsert({ user_id: userId, day }, { onConflict: 'user_id,day' }),
+    // Already checked in today (second device, start over): keep the first. There's
+    // no update policy on check_ins, so a merging upsert would be refused.
+    supabase.from('check_ins').upsert({ user_id: userId, day }, { onConflict: 'user_id,day', ignoreDuplicates: true }),
     supabase.from('profiles').update({ streak }).eq('id', userId),
   ]);
   if (checkIn.error) console.warn('syncCheckIn: check_in failed', checkIn.error.message);

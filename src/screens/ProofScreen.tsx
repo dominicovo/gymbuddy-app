@@ -13,6 +13,7 @@ import { getCurrentLocation } from '../lib/location';
 import { distanceInMeters } from '../lib/geo';
 import { IoniconName } from '../types';
 import { LOCATION_CHECK_IN } from '../config/features';
+import { PhotoVerdict, checkGymPhoto } from '../lib/gymPhoto';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Proof'>;
 
@@ -22,6 +23,11 @@ type Fix =
   | { kind: 'denied' }
   | { kind: 'error' }
   | { kind: 'measured'; meters: number; inRange: boolean };
+
+type PhotoCheck = { kind: 'idle' } | { kind: 'checking' } | PhotoVerdict;
+
+// Strict, never stuck: after this many rejected photos, let them through anyway.
+const MISSES_BEFORE_OVERRIDE = 3;
 
 function formatMeters(m: number): string {
   return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
@@ -34,6 +40,9 @@ export function ProofScreen({ navigation }: Props) {
 
   const [fix, setFix] = useState<Fix>({ kind: 'checking' });
   const [photoUri, setPhotoUri] = useState<string | null>(null);
+  const [photoCheck, setPhotoCheck] = useState<PhotoCheck>({ kind: 'idle' });
+  const [misses, setMisses] = useState(0);
+  const [overridden, setOverridden] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [newStreak, setNewStreak] = useState<number | null>(null);
 
@@ -61,6 +70,21 @@ export function ProofScreen({ navigation }: Props) {
     if (LOCATION_CHECK_IN) void measure();
   }, [measure]);
 
+  async function usePhoto(uri: string) {
+    setPhotoUri(uri);
+    setOverridden(false);
+    setPhotoCheck({ kind: 'checking' });
+    const verdict = await checkGymPhoto(uri);
+    setPhotoCheck(verdict);
+    if (verdict.kind === 'notGym' || verdict.kind === 'screen') setMisses((m) => m + 1);
+  }
+
+  // The simulator has no camera; lets the photo check be tried with library images.
+  async function pickFromLibraryDev() {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.6 });
+    if (!result.canceled && result.assets[0]) await usePhoto(result.assets[0].uri);
+  }
+
   async function takePhoto() {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
@@ -72,7 +96,7 @@ export function ProofScreen({ navigation }: Props) {
     }
     try {
       const result = await ImagePicker.launchCameraAsync({ quality: 0.6 });
-      if (!result.canceled && result.assets[0]) setPhotoUri(result.assets[0].uri);
+      if (!result.canceled && result.assets[0]) await usePhoto(result.assets[0].uri);
     } catch (error) {
       console.warn('launchCameraAsync failed', error);
       Alert.alert('Camera unavailable', 'This device has no camera GymBuddy can use.');
@@ -119,12 +143,22 @@ export function ProofScreen({ navigation }: Props) {
   const status = describeFix(fix, gymLocation?.label ?? 'your gym', radiusMeters);
   // With photo-only check-ins, there's no location to be "in range" of.
   const inRange = !LOCATION_CHECK_IN || (fix.kind === 'measured' && fix.inRange);
-  const ready = inRange && !!photoUri;
+  // No classifier (older app build) or it failed: don't block on our problem.
+  const photoOk = photoCheck.kind === 'gym' || photoCheck.kind === 'unavailable' || overridden;
+  const rejected = !overridden && (photoCheck.kind === 'notGym' || photoCheck.kind === 'screen');
+  const canOverride = rejected && misses >= MISSES_BEFORE_OVERRIDE;
+  const ready = inRange && !!photoUri && photoOk;
   const hint = !photoUri
     ? 'Take a photo to continue.'
-    : !inRange
-      ? 'You need to be at your gym to unlock.'
-      : 'The photo stays on your phone.';
+    : photoCheck.kind === 'checking'
+      ? 'Checking your photo…'
+      : rejected
+        ? canOverride
+          ? 'Still not passing? You can use this photo anyway.'
+          : 'Retake the photo to continue.'
+        : !inRange
+          ? 'You need to be at your gym to unlock.'
+          : 'Checked on your phone. The photo never leaves it.';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -175,6 +209,7 @@ export function ProofScreen({ navigation }: Props) {
         {photoUri ? (
           <>
             <Image source={{ uri: photoUri }} style={styles.photoImage} />
+            <PhotoBadge check={photoCheck} overridden={overridden} />
             <Pressable
               style={styles.retake}
               onPress={takePhoto}
@@ -199,10 +234,58 @@ export function ProofScreen({ navigation }: Props) {
       </Pressable>
 
       <View style={styles.footer}>
-        <Button title="Unlock my apps" icon="lock-open" disabled={!ready} loading={submitting} onPress={submit} />
+        {rejected && !canOverride ? (
+          <Button title="Retake photo" icon="camera-reverse" onPress={takePhoto} />
+        ) : (
+          <Button title="Unlock my apps" icon="lock-open" disabled={!ready} loading={submitting} onPress={submit} />
+        )}
         <Text style={styles.hint}>{hint}</Text>
+        {__DEV__ && (
+          <Pressable onPress={pickFromLibraryDev} hitSlop={8} accessibilityRole="button" style={styles.override}>
+            <Text style={styles.overrideText}>Pick from library (dev only)</Text>
+          </Pressable>
+        )}
+        {canOverride && (
+          <Pressable onPress={() => setOverridden(true)} hitSlop={8} accessibilityRole="button" style={styles.override}>
+            <Text style={styles.overrideText}>Use this photo anyway</Text>
+          </Pressable>
+        )}
       </View>
     </SafeAreaView>
+  );
+}
+
+function PhotoBadge({ check, overridden }: { check: PhotoCheck; overridden: boolean }) {
+  if (check.kind === 'idle' || check.kind === 'unavailable') return null;
+  if (check.kind === 'checking') {
+    return (
+      <View style={[styles.badge, styles.badgeNeutral]}>
+        <ActivityIndicator color={colors.text} size="small" />
+        <Text style={styles.badgeTitle}>Checking your photo…</Text>
+      </View>
+    );
+  }
+  if (check.kind === 'gym' || overridden) {
+    return (
+      <View style={[styles.badge, styles.badgeOk]}>
+        <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+        <Text style={styles.badgeTitle}>{overridden ? 'Using this photo' : 'Looks like a gym'}</Text>
+      </View>
+    );
+  }
+  const screen = check.kind === 'screen';
+  return (
+    <View style={[styles.badge, styles.badgeBad]}>
+      <Ionicons name={screen ? 'tv-outline' : 'alert-circle'} size={20} color={colors.danger} />
+      <View style={styles.badgeText}>
+        <Text style={styles.badgeTitle}>{screen ? 'That looks like a screen' : 'This doesn’t look like a gym'}</Text>
+        <Text style={styles.badgeBody}>
+          {screen
+            ? 'Take the photo at the gym, not of a photo on a screen.'
+            : 'Get some kit in the shot: a rack, weights, a bench or machines.'}
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -326,6 +409,27 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   retakeText: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  badge: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    bottom: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm + 2,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 4,
+  },
+  badgeNeutral: { backgroundColor: 'rgba(8, 7, 12, 0.82)', borderColor: colors.borderStrong },
+  badgeOk: { backgroundColor: 'rgba(12, 23, 17, 0.9)', borderColor: colors.successBorder },
+  badgeBad: { backgroundColor: 'rgba(8, 7, 12, 0.9)', borderColor: colors.danger },
+  badgeText: { flex: 1 },
+  badgeTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
+  badgeBody: { color: colors.textMuted, fontSize: 14, lineHeight: 19, marginTop: 2 },
+  override: { alignSelf: 'center', paddingVertical: spacing.xs },
+  overrideText: { color: colors.accent, fontSize: 15, fontWeight: '600' },
   footer: { paddingTop: spacing.md, paddingBottom: spacing.sm, gap: spacing.sm },
   hint: { color: colors.textMuted, fontSize: 14, textAlign: 'center' },
   success: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.lg },
