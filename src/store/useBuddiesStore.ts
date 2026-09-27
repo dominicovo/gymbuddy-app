@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { DayOfWeek } from '../types';
 import { toISODate } from '../lib/schedule';
 import { notifyBuddy } from '../lib/push';
+import { demoFlag } from '../dev/demoFlag';
 
 export type NudgeKind = 'cheer' | 'nudge';
 
@@ -111,6 +112,7 @@ export const useBuddiesStore = create<BuddiesState>()((set, get) => ({
   nudgesReady: false,
 
   load: async () => {
+    if (__DEV__ && demoFlag.active) return; // screenshot sample data stays put
     const { data: sessionData } = await supabase.auth.getSession();
     const me = sessionData.session?.user.id;
     if (!me) {
@@ -189,6 +191,7 @@ export const useBuddiesStore = create<BuddiesState>()((set, get) => ({
   },
 
   subscribe: () => {
+    if (__DEV__ && demoFlag.active) return () => {};
     const reload = () => void get().load();
     const channel = supabase
       .channel('buddies-live')

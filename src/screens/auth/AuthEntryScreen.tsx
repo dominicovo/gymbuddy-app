@@ -9,6 +9,7 @@ import { colors, radius, spacing, type } from '../../theme/colors';
 import { RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useAppStore } from '../../store/useAppStore';
+import { loadDemo } from '../../dev/demo';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AuthEntry'>;
 
@@ -56,6 +57,12 @@ export function AuthEntryScreen({ navigation }: Props) {
       navigation.navigate('AuthCard');
       return;
     }
+    enter();
+  }
+
+  // App Store screenshots: fill every screen with sample data.
+  function loadDemoData() {
+    loadDemo();
     enter();
   }
 
@@ -125,6 +132,7 @@ export function AuthEntryScreen({ navigation }: Props) {
 
           {/* Stripped from release builds by the __DEV__ guard. */}
           {__DEV__ && <Button title="Skip sign-in (dev only)" variant="secondary" onPress={skipSignIn} />}
+          {__DEV__ && <Button title="Load demo data (dev only)" variant="secondary" onPress={loadDemoData} />}
         </View>
       </View>
 

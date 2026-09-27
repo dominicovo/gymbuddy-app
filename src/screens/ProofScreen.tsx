@@ -14,6 +14,7 @@ import { distanceInMeters } from '../lib/geo';
 import { IoniconName } from '../types';
 import { LOCATION_CHECK_IN } from '../config/features';
 import { PhotoVerdict, checkGymPhoto } from '../lib/gymPhoto';
+import { demoFlag } from '../dev/demoFlag';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Proof'>;
 
@@ -240,7 +241,7 @@ export function ProofScreen({ navigation }: Props) {
           <Button title="Unlock my apps" icon="lock-open" disabled={!ready} loading={submitting} onPress={submit} />
         )}
         <Text style={styles.hint}>{hint}</Text>
-        {__DEV__ && (
+        {__DEV__ && !(demoFlag.active && photoUri) && (
           <Pressable onPress={pickFromLibraryDev} hitSlop={8} accessibilityRole="button" style={styles.override}>
             <Text style={styles.overrideText}>Pick from library (dev only)</Text>
           </Pressable>

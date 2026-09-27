@@ -1,4 +1,5 @@
 import GymVision, { type Classification } from '../../modules/gym-vision';
+import { demoFlag } from '../dev/demoFlag';
 
 // Is this check-in photo taken at a gym? Apple's on-device classifier labels
 // the photo; we score the labels here so the rules stay easy to tune. Nothing
@@ -49,6 +50,8 @@ export function scorePhoto(labels: Classification[]): PhotoVerdict {
 }
 
 export async function checkGymPhoto(uri: string): Promise<PhotoVerdict> {
+  // Screenshot sample data: the simulator can't run the classifier properly.
+  if (__DEV__ && demoFlag.active) return { kind: 'gym', score: 0.94 };
   if (!GymVision) return { kind: 'unavailable' };
   try {
     return scorePhoto(await GymVision.classify(uri, 0.05));

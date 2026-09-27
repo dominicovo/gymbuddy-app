@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { supabase } from './supabase';
+import { demoFlag } from '../dev/demoFlag';
 
 // Push notifications for nudges, cheers and buddy requests. The phone's APNs
 // token is registered in Supabase; the `notify` Edge Function sends through
@@ -18,6 +19,7 @@ Notifications.setNotificationHandler({
 export type NotificationStatus = 'granted' | 'denied' | 'undetermined';
 
 export async function notificationStatus(): Promise<NotificationStatus> {
+  if (__DEV__ && demoFlag.active) return 'granted'; // no permission card in screenshots
   const { status } = await Notifications.getPermissionsAsync();
   return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
 }
