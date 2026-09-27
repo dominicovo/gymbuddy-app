@@ -15,7 +15,7 @@ export const colors = {
   text: '#F6F5FA',
   textMuted: '#A09DAE',
   textFaint: '#6E6B7B',
-  textOnAccent: '#FFFFFF',
+  textOnAccent: '#08070C', // dark on the purple accent — buttons, selected days, badges
   accent: '#8B84F0',
   accentStrong: '#A79FFF',
   accentMuted: 'rgba(139, 132, 240, 0.16)',

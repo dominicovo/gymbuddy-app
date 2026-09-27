@@ -144,8 +144,8 @@ export function updateShieldCopy(params: { schedule: Schedule; gymName: string |
     subtitle: `Your gym window is open until ${formatHHMM(schedule.windowEnd)}. Check in at ${gym} and everything unlocks for the day.${streakLine}`,
     subtitleColor: rgb('#A8A6B3'),
     primaryButtonLabel: "I'm at the gym",
-    primaryButtonLabelColor: rgb('#FFFFFF'),
-    primaryButtonBackgroundColor: rgb('#4F46E5'),
+    primaryButtonLabelColor: rgb('#08070C'),
+    primaryButtonBackgroundColor: rgb('#8B84F0'),
     secondaryButtonLabel: 'Not now',
     secondaryButtonLabelColor: rgb('#A8A6B3'),
   };

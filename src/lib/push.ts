@@ -31,22 +31,38 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return granted;
 }
 
+// What this phone last registered, so the same token isn't sent twice and
+// sign-out knows what to remove without asking iOS again.
+let registered: { userId: string; token: string } | null = null;
+
 async function deviceToken(): Promise<string | null> {
   if (!(await Notifications.getPermissionsAsync()).granted) return null;
+  // Note: every call makes iOS fire the token event too, so this must never
+  // be called from an addPushTokenListener callback (that loops forever).
   const token = await Notifications.getDevicePushTokenAsync();
   return token.type === 'ios' && typeof token.data === 'string' ? token.data : null;
 }
 
-/** Links this phone to the signed-in account. Silent no-op without a session or permission. */
-export async function registerPushToken(): Promise<void> {
+/**
+ * Links this phone to the signed-in account. Silent no-op without a session
+ * or permission. Pass `token` when iOS has just handed one over (the token
+ * listener) — never re-request it there.
+ */
+export async function registerPushToken(token?: string): Promise<void> {
   try {
     const { data } = await supabase.auth.getSession();
-    if (!data.session) return;
-    const token = await deviceToken();
-    if (!token) return;
-    const { error } = await supabase.rpc('register_push_token', { device_token: token });
-    // PGRST202: the server hasn't been set up for push yet (migration 008).
-    if (error && error.code !== 'PGRST202') console.warn('register_push_token failed', error.message);
+    const userId = data.session?.user.id;
+    if (!userId) return;
+    const deviceTokenHex = token ?? (await deviceToken());
+    if (!deviceTokenHex) return;
+    if (registered?.userId === userId && registered.token === deviceTokenHex) return;
+    const { error } = await supabase.rpc('register_push_token', { device_token: deviceTokenHex });
+    if (error) {
+      // PGRST202: the server hasn't been set up for push yet (migration 008).
+      if (error.code !== 'PGRST202') console.warn('register_push_token failed', error.message);
+      return;
+    }
+    registered = { userId, token: deviceTokenHex };
   } catch (error) {
     console.warn('registerPushToken failed', error);
   }
@@ -54,10 +70,11 @@ export async function registerPushToken(): Promise<void> {
 
 /** Before signing out: stop this account's notifications arriving on this phone. */
 export async function unregisterPushToken(): Promise<void> {
+  const current = registered;
+  registered = null;
+  if (!current) return;
   try {
-    const token = await deviceToken();
-    if (!token) return;
-    const { error } = await supabase.rpc('unregister_push_token', { device_token: token });
+    const { error } = await supabase.rpc('unregister_push_token', { device_token: current.token });
     if (error && error.code !== 'PGRST202') console.warn('unregister_push_token failed', error.message);
   } catch (error) {
     console.warn('unregisterPushToken failed', error);

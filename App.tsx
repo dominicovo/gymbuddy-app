@@ -146,7 +146,10 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated) return;
     void registerPushToken();
-    const sub = Notifications.addPushTokenListener(() => void registerPushToken());
+    // Use the token the event carries: asking iOS again would fire this event again, forever.
+    const sub = Notifications.addPushTokenListener((token) => {
+      if (typeof token.data === 'string') void registerPushToken(token.data);
+    });
     return () => sub.remove();
   }, [isAuthenticated]);
 
