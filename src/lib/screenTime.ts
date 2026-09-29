@@ -150,9 +150,21 @@ export function updateShieldCopy(params: { schedule: Schedule; gymName: string |
     secondaryButtonLabelColor: rgb('#A8A6B3'),
   };
 
-  // Opens GymBuddy (the `gymbuddy://` scheme, registered in app.json) so the
-  // user lands back on the Unlock tab's "I'm at the Gym" flow.
-  const primary = { behavior: 'close', type: 'openUrl', url: 'gymbuddy://' } as unknown as ShieldAction;
+  // iOS won't let a shield open an app, so "I'm at the gym" posts a
+  // notification instead; tapping it opens GymBuddy straight on check-in
+  // (App.tsx routes on `gbAction`). Needs notification permission.
+  const primary: ShieldAction = {
+    behavior: 'close',
+    type: 'sendNotification',
+    payload: {
+      identifier: 'gymbuddy-check-in',
+      title: 'Tap to check in',
+      body: 'Snap a photo at the gym and your apps unlock for the day.',
+      sound: 'default',
+      interruptionLevel: 'active',
+      userInfo: { gbAction: 'checkin' },
+    },
+  };
   const secondary: ShieldAction = { behavior: 'close' };
 
   const actions: ShieldActions = { primary, secondary };

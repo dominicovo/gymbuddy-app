@@ -9,7 +9,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "bundleIdentifier": "com.dominiceburuoh.gymbuddy",
-      "buildNumber": "14",
+      "buildNumber": "15",
       "appleTeamId": "GA5P2J5N3R",
       "supportsTablet": false,
       "usesAppleSignIn": true,
@@ -31,6 +31,8 @@
       ]
     },
     "android": {
+      "package": "com.dominiceburuoh.gymbuddy",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#000000",
         "foregroundImage": "./assets/android-icon-foreground.png",

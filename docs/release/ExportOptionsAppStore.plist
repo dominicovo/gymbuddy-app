@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- App Store / TestFlight upload with manual signing. Automatic signing drops
+     Family Controls from the extensions' App Store profiles, so these
+     portal-made profiles (by UUID) are used instead. -->
+<plist version="1.0">
+<dict>
+  <key>method</key><string>app-store-connect</string>
+  <key>destination</key><string>upload</string>
+  <key>teamID</key><string>GA5P2J5N3R</string>
+  <key>signingStyle</key><string>manual</string>
+  <key>signingCertificate</key><string>Apple Distribution</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>com.dominiceburuoh.gymbuddy</key><string>b5732ba3-b354-45a4-80ab-a604c2d21162</string>
+    <key>com.dominiceburuoh.gymbuddy.ShieldAction</key><string>836a3497-e23e-4f1c-9775-694151c95dd2</string>
+    <key>com.dominiceburuoh.gymbuddy.ShieldConfiguration</key><string>fbfc3f45-b9fd-4bf2-9892-df855a160bed</string>
+    <key>com.dominiceburuoh.gymbuddy.DeviceActivityMonitor</key><string>f36356ce-0d63-4154-aad0-a4ae395ffffe</string>
+  </dict>
+  <key>uploadSymbols</key><true/>
+  <key>manageAppVersionAndBuildNumber</key><false/>
+</dict>
+</plist>

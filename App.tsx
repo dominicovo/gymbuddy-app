@@ -36,6 +36,8 @@ import { colors } from './src/theme/colors';
 import { parsePairCode, usePairLinkStore } from './src/lib/pairLinks';
 import * as Notifications from 'expo-notifications';
 import { registerPushToken } from './src/lib/push';
+import { updateShieldCopy } from './src/lib/screenTime';
+import { liveStreak } from './src/lib/stats';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
@@ -142,6 +144,19 @@ export default function App() {
     setPending(null);
   }, [pendingCode, navReady, isAuthenticated, onboardingComplete, setPending]);
 
+  // The lock screen only changes when the app rewrites it, so refresh it on
+  // launch: an update's new shield copy and buttons reach existing installs.
+  useEffect(() => {
+    if (!onboardingComplete) return;
+    const { schedule, gymLocation, streak, lastProofDate } = useAppStore.getState();
+    if (!schedule) return;
+    try {
+      updateShieldCopy({ schedule, gymName: gymLocation?.label ?? null, streak: liveStreak(schedule, streak, lastProofDate, new Date()) });
+    } catch (error) {
+      console.warn('updateShieldCopy failed', error);
+    }
+  }, [onboardingComplete]);
+
   // Push: link this phone to the account whenever someone is signed in, and
   // again if iOS ever hands out a new token.
   useEffect(() => {
@@ -162,23 +177,27 @@ export default function App() {
     };
   }, [isAuthenticated]);
 
-  // Tapping a nudge, cheer or buddy request opens the Buddies tab — including
-  // when the tap is what launched the app.
-  const [openBuddies, setOpenBuddies] = useState(false);
+  // Tapping a notification — including when the tap launched the app:
+  // the lock screen's "Tap to check in" opens check-in; a nudge, cheer or
+  // buddy request opens the Buddies tab.
+  const [openFromNotification, setOpenFromNotification] = useState<'checkin' | 'buddies' | null>(null);
   useEffect(() => {
+    const route = (response: Notifications.NotificationResponse) =>
+      setOpenFromNotification(response.notification.request.content.data?.gbAction === 'checkin' ? 'checkin' : 'buddies');
     Notifications.getLastNotificationResponseAsync().then((response) => {
-      if (response) setOpenBuddies(true);
+      if (response) route(response);
     });
-    const sub = Notifications.addNotificationResponseReceivedListener(() => setOpenBuddies(true));
+    const sub = Notifications.addNotificationResponseReceivedListener(route);
     return () => sub.remove();
   }, []);
 
   useEffect(() => {
-    if (!openBuddies || !navReady || !isAuthenticated || !onboardingComplete) return;
-    navigationRef.navigate('Main', { screen: 'Buddies' });
-    setOpenBuddies(false);
+    if (!openFromNotification || !navReady || !isAuthenticated || !onboardingComplete) return;
+    if (openFromNotification === 'checkin') navigationRef.navigate('Proof');
+    else navigationRef.navigate('Main', { screen: 'Buddies' });
+    setOpenFromNotification(null);
     void Notifications.clearLastNotificationResponseAsync();
-  }, [openBuddies, navReady, isAuthenticated, onboardingComplete]);
+  }, [openFromNotification, navReady, isAuthenticated, onboardingComplete]);
 
   // A font that fails to load falls back to the system face — never block on it.
   if (authLoading || (!fontsLoaded && !fontError)) {
